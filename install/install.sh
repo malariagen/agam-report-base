@@ -13,9 +13,6 @@ cd dependencies
 export PATH=./texlive/2016/bin/x86_64-linux:$PATH
 export PATH=./miniconda/bin:$PATH
 
-# force texlive re-install
-#rm -v texlive.installed
-
 # install texlive
 if [ ! -f texlive.installed ]; then
     echo "[install] installing texlive"
@@ -53,9 +50,6 @@ if [ ! -f texlive.installed ]; then
 else
     echo "[install] skipping texlive installation"
 fi
-
-# force miniconda re-install
-#rm -v miniconda.installed
 
 # install miniconda
 if [ ! -f miniconda.installed ]; then

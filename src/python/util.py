@@ -14,6 +14,7 @@ import datetime
 
 # third party library imports
 import humanize
+import pandas
 
 
 _slog_indent = -2
@@ -195,3 +196,77 @@ def fig_linear_genome(plotf, genome, chromosomes=('2R', '2L', '3R', '3L', 'X'),
             left += chrom_pad
 
     return axs
+
+
+def geneset_to_pandas(geneset):
+    """Life is a bit easier when a geneset is a pandas DataFrame."""
+    items = []
+    for n in geneset.dtype.names:
+        v = geneset[n]
+        # convert bytes columns to unicode (which pandas then converts to object)
+        if v.dtype.kind == 'S':
+            v = v.astype('U')
+        items.append((n, v))
+    return pandas.DataFrame.from_items(items)
+
+
+class SeqFeature(object):
+    """Genomic sequence feature, with utilities for mapping between coordinate systems.
+
+    Parameters
+    ----------
+    seqid : string
+        Chromosome or contig.
+    start : int
+        Start coordinate, 1-based.
+    end : int
+        End coordinate, 1-based, end-inclusive.
+
+    """
+
+    def __init__(self, seqid, start, end, strand=None, genome=None, label=None):
+        self.seqid = seqid
+        self.start = start
+        self.end = end
+        self.strand = strand
+        self.genome = genome
+        self.label = label
+
+    @property
+    def loc0(self):
+        """A zero-based stop-exclusive slice."""
+        return slice(self.start - 1, self.end)
+
+    @property
+    def query_str(self):
+        """A pandas-style query string."""
+        return "(seqid == %r) & (start >= %s) & (end <= %s)" % (self.seqid, self.start, self.end)
+
+    @property
+    def region_str(self):
+        """A samtools-style region string."""
+        return "%s:%s-%s" % (self.seqid, self.start, self.end)
+
+    @property
+    def seq(self):
+        """The reference sequence."""
+        return self.genome[self.seqid][self.loc0]
+
+    def __len__(self):
+        # include start and end positions in length
+        return self.end - self.start + 1
+
+    def __iter__(self):
+        yield self.seqid
+        yield self.start
+        yield self.end
+
+    def __repr__(self):
+        r = '<%s' % type(self).__name__
+        if self.label:
+            r += ' %r' % self.label
+        r += ' ' + self.region_str
+        if self.strand:
+            r += ' (%s)' % self.strand
+        r += '>'
+        return r

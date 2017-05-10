@@ -15,6 +15,10 @@ import datetime
 # third party library imports
 import humanize
 import pandas
+import petl as etl
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 _slog_indent = -2
@@ -142,8 +146,6 @@ def fig_linear_genome(plotf, genome, chromosomes=('2R', '2L', '3R', '3L', 'X'),
 
     """
 
-    import matplotlib as mpl
-    import matplotlib.pyplot as plt
     from matplotlib.path import Path
 
     # compute assembled genome size
@@ -270,3 +272,93 @@ class SeqFeature(object):
             r += ' (%s)' % self.strand
         r += '>'
         return r
+
+
+chromosomes = '2R', '2L', '3R', '3L', 'X', 'Y_unplaced', 'UNKN'
+autosomes = chromosomes[:4]
+
+
+gene_labels = {
+    'AGAP009195': 'Gste1',
+    'AGAP009194': 'Gste2',
+    'AGAP009197': 'Gste3',
+    'AGAP009193': 'Gste4',
+    'AGAP009192': 'Gste5',
+    'AGAP009191': 'Gste6',
+    'AGAP009196': 'Gste7',
+    'AGAP009190': 'Gste8',
+    'AGAP004707': 'Vgsc',
+    'AGAP002862': 'Cyp6aa1',
+    'AGAP013128': 'Cyp6aa2',
+    'AGAP002863': 'Coeae6o',
+    'AGAP002865': 'Cyp6p3',
+    'AGAP002866': 'Cyp6p5',
+    'AGAP002867': 'Cyp6p4',
+    'AGAP002868': 'Cyp6p1',
+    'AGAP002869': 'Cyp6p2',
+    'AGAP002870': 'Cyp6ad1',
+    'AGAP002915': 'Pcsk4/furin',
+    'AGAP002825': 'Pp01',
+    'AGAP002824': 'Gprtak1',
+    'AGAP006028': 'Gaba',
+    'AGAP010815': 'Tep1'
+}
+
+
+def get_geneset_features(geneset_fn, chrom, start=None, stop=None):
+    """Function to load geneset features for a specific genome region via petl."""
+    if start and stop:
+        region = '%s:%s-%s' % (chrom, start, stop)
+    else:
+        region = chrom
+    return etl.fromgff3(geneset_fn, region=region)
+
+
+def plot_genes(genome, geneset_fn, chrom, start=1, stop=None, ax=None, height=.3, label=False,
+               labels=None, label_unnamed=True, barh_kwargs=None):
+
+    if stop is None:
+        stop = len(genome[chrom])
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 1))
+        sns.despine(ax=ax, offset=5)
+
+    genes = get_geneset_features(geneset_fn, chrom, start, stop).eq('type', 'gene').records()
+
+    fwd_ranges = [(g.start, (g.end - g.start)) for g in genes if g.strand == '+']
+    rev_ranges = [(g.start, (g.end - g.start)) for g in genes if g.strand == '-']
+    if barh_kwargs is None:
+        barh_kwargs = dict()
+    barh_kwargs.setdefault('color', 'k')
+    ax.broken_barh(fwd_ranges, (.5, height), **barh_kwargs)
+    ax.broken_barh(rev_ranges, (.5-height, height), **barh_kwargs)
+    ax.set_ylim(0, 1)
+    ax.axhline(.5, color='k', linestyle='-')
+    ax.set_xlim(start, stop)
+    ax.set_yticks([.5-(height/2), .5+(height/2)])
+    ax.set_yticklabels(['-', '+'])
+    ax.set_ylabel('genes', rotation=0, ha='right', va='center')
+
+    if label:
+        for gene in genes:
+            gid = gene.attributes['ID']
+            if labels and gid not in labels and not label_unnamed:
+                continue
+            if labels and gid in labels:
+                label = labels[gid]
+            else:
+                label = gid
+            x = gene.start
+            if x < start:
+                x = start
+            if x > stop:
+                x = stop
+            if gene.strand == '+':
+                rotation = 45
+                y = .5 + height
+                ax.text(x, y, label, rotation=rotation, fontsize=6, ha='left', va='bottom')
+            else:
+                rotation = -45
+                y = .5 - height
+                ax.text(x, y, label, rotation=rotation, fontsize=6, ha='left', va='top')

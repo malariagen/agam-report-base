@@ -11,7 +11,8 @@ import seaborn as sns
 import allel
 import graphviz
 import pyximport
-pyximport.install()
+pyximport.install(setup_args=dict(include_dirs=np.get_include()),
+                  reload_support=True)
 from hapclust_opt import count_gametes
 
 

@@ -1094,10 +1094,9 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
             # distance at which haplotypes diverge
             d = pspd[ix]
             # index into mutations array where haplotypes diverge
-            ix = bisect.bisect_left(dist_mut, d)
+            idx_mut_div = bisect.bisect_left(dist_mut, d)
             # number of mutations
-            m = np.count_nonzero(
-                haps_mut[:ix, i] != haps_mut[:ix, j])
+            m = np.count_nonzero(haps_mut[:idx_mut_div, i] != haps_mut[:idx_mut_div, j])
             muts[ix] = m
 
     return pspl, pspd, muts

@@ -908,9 +908,9 @@ def split_flanks(h, pos, pos_core):
     pos = np.asarray(pos)
     idx_split = bisect.bisect_left(pos, pos_core)
     dist_right = pos[idx_split:] - pos_core
-    dist_left = pos_core - pos[:idx_split]
     haps_right = allel.HaplotypeArray(h[idx_split:, :])
     # reverse so both flanks have same orientation w.r.t core
+    dist_left = pos_core - pos[:idx_split][::-1]
     haps_left = allel.HaplotypeArray(h[:idx_split, :][::-1, :])
     return dist_right, dist_left, haps_right, haps_left
 
@@ -935,7 +935,8 @@ def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
 
     # compute length (physical distance) of shared prefix between neighbours
     # TODO check if nspl is at or beyond point of divergence
-    nspd = np.asarray(dist_ehh)[nspl + 1]
+    # N.B., need to watch where EHH continues up to end of data
+    nspd = np.asarray(dist_ehh)[(nspl + 1).clip(max=dist_ehh.shape[0] - 1)]
 
     # compute number of mutations on shared haplotypes
     muts = np.zeros_like(nspl)
@@ -952,8 +953,151 @@ def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
     return idx_sorted, nspl, nspd, muts
 
 
-def fig_neighbour_haplotype_sharing(cut_dist, fig=None):
+def fig_neighbour_haplotype_sharing(nspd, muts, haps_display, pop_colors,
+                                    haps_display_vlbl=None,
+                                    nspd_cut=None,
+                                    nspd_ylim=None,
+                                    nspd_yscale='log',
+                                    cluster_palette=None,
+                                    muts_ylim=None,
+                                    that_ylim=None,
+                                    mu=3.5e-9,
+                                    rr=1e-8,
+                                    gs_height_ratios=(6, 3, 3, .5, 6),
+                                    fig=None):
 
+    # check args
+    nspd = np.asarray(nspd)
+    muts = np.asarray(muts)
+    haps_display = allel.HaplotypeArray(haps_display)
+    n_haplotypes = nspd.shape[0] + 1
+    assert n_haplotypes == muts.shape[0] + 1
+    assert n_haplotypes == haps_display.n_haplotypes
+
+    # setup figure
     if fig is None:
         fig = plt.figure()
+    gs = mpl.gridspec.GridSpec(nrows=5, ncols=1, height_ratios=gs_height_ratios)
+    if cluster_palette is None:
+        cluster_palette = sns.color_palette('Set3', n_colors=12)
 
+    # plot shared haplotype lengths
+    ###############################
+
+    ax_nspd = fig.add_subplot(gs[0])
+    sns.despine(ax=ax_nspd, offset=5, bottom=True)
+    # N.B., values are distances shared between neighbouring haplotypes
+    x = np.arange(0, n_haplotypes - 1) + .5
+    y = nspd
+    ax_nspd.plot(x, y, color='k', lw=.5, zorder=10)
+
+    # clustering
+    if nspd_cut:
+        clst_start_idx = 0
+        clst_idx = 0
+        for i in range(1, n_haplotypes):
+            if y[i-1] < nspd_cut:
+                if i - clst_start_idx > 1:
+                    color = cluster_palette[clst_idx % len(cluster_palette)]
+                    ax_nspd.fill_between(x[clst_start_idx:i], 0, y[clst_start_idx:i], color=color)
+                    clst_idx += 1
+                clst_start_idx = i
+        ax_nspd.axhline(nspd_cut, color='k', linestyle='--', lw=.5)
+
+    # tidy up
+    if nspd_yscale:
+        ax_nspd.set_yscale(nspd_yscale)
+    if nspd_ylim:
+        ax_nspd.set_ylim(nspd_ylim)
+    ax_nspd.set_xlim(0, n_haplotypes)
+    ax_nspd.set_xticks([])
+    ax_nspd.set_ylabel('Shared haplotype length (bp)')
+
+    # plot number of mutations
+    ##########################
+
+    ax_muts = fig.add_subplot(gs[1])
+    sns.despine(ax=ax_muts, offset=5, bottom=True)
+    x = np.arange(0, n_haplotypes - 1) + .5
+    y = muts
+    ax_muts.bar(x, y, width=1, align='edge', color='k')
+    ax_muts.set_xlim(0, n_haplotypes)
+    ax_muts.set_xticks([])
+    if muts_ylim:
+        ax_muts.set_ylim(*muts_ylim)
+    ax_muts.set_ylabel('No. mutations')
+
+    # plot t_hat
+    ############
+
+    ax_that = fig.add_subplot(gs[2])
+    sns.despine(ax=ax_that, offset=5, bottom=True)
+    x = np.arange(0, n_haplotypes - 1) + .5
+    that = (1 + muts) / (2 * ((nspd * rr) + (nspd * mu)))
+    ax_that.bar(x, that, width=1, align='edge', color='k')
+    ax_that.set_xlim(0, n_haplotypes)
+    ax_that.set_xticks([])
+    ax_that.set_yscale('log')
+    if that_ylim:
+        ax_that.set_ylim(*that_ylim)
+    ax_that.set_ylabel('$\hat{t}$', rotation=0, ha='right', va='center')
+
+    # plot haplotype colors
+    #######################
+
+    ax_hcol = fig.add_subplot(gs[3])
+    sns.despine(ax=ax_hcol, left=True, bottom=True)
+    ax_hcol.broken_barh([(i, 1) for i in range(n_haplotypes)], yrange=(0, 1),
+                        color=pop_colors)
+    ax_hcol.set_xlim(0, n_haplotypes)
+    ax_hcol.set_xticks([])
+    ax_hcol.set_yticks([])
+    ax_hcol.set_ylabel('Population', rotation=0, ha='right', va='center')
+
+    # plot display haplotypes
+    #########################
+
+    ax = fig.add_subplot(gs[4])
+    plot_haplotypes(ax, haps_display, haps_display_vlbl)
+    ax.set_xlim(0, n_haplotypes)
+    ax.set_xlabel('Haplotypes')
+
+    # final tidy up
+    ###############
+
+    gs.tight_layout(fig, h_pad=0)
+
+
+def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
+    """Analyse sharing between all haplotype pairs."""
+
+    haps_ehh = allel.HaplotypeArray(haps_ehh)
+    haps_mut = allel.HaplotypeArray(haps_mut)
+    n_haplotypes = haps_ehh.n_haplotypes
+    assert n_haplotypes == haps_mut.n_haplotypes
+
+    # compute length (no. variants) of shared prefix between pairs
+    pspl = allel.opt.stats.pairwise_shared_prefix_lengths_int8(
+        np.asarray(haps_ehh, dtype='i1')
+    )
+
+    # compute length (physical distance) of shared prefix between neighbours
+    # TODO check if nspl is at or beyond point of divergence
+    # N.B., need to watch where EHH continues up to end of data
+    pspd = np.asarray(dist_ehh)[(pspl + 1).clip(max=dist_ehh.shape[0] - 1)]
+
+    # compute number of mutations on shared haplotypes
+    muts = np.zeros_like(pspl)
+    for i in range(n_haplotypes):
+        for j in range(i+1, n_haplotypes):
+            ix = allel.condensed_coords(i, j, n_haplotypes)
+            # distance at which haplotypes diverge
+            d = pspd[ix]
+            # index into mutations array where haplotypes diverge
+            ix = bisect.bisect_left(dist_mut, d)
+            # number of mutations
+            m = np.count_nonzero(
+                haps_mut[:ix, i] != haps_mut[:ix, j])
+            muts[ix] = m
+
+    return pspl, pspd, muts

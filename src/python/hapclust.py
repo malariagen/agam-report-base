@@ -836,6 +836,10 @@ def locate_recombinants(h, debug=False):
     return sorted(solutions, key=lambda s: len(s))
 
 
+# MISC PLOTTING
+###############
+
+
 import matplotlib.image as mpimg
 import io
 
@@ -877,3 +881,79 @@ def plot_graphviz(graph, ax, size=None, desired_size=False, ratio=None, dpi=None
 
     # plot the image
     ax.imshow(img, interpolation=interpolation, aspect=aspect)
+
+
+import matplotlib as mpl
+
+
+def plot_haplotypes(ax, h, variant_labels=None, colors=('w', 'k'), vmin=0, vmax=2):
+    cmap = mpl.colors.ListedColormap(colors, name='mymap')
+    ax.pcolormesh(np.asarray(h[::-1]), cmap=cmap, vmin=vmin, vmax=vmax)
+    if variant_labels:
+        ax.set_yticks(np.arange(h.shape[0])+.5)
+        ax.set_yticklabels(variant_labels[::-1], family='monospace')
+        ax.hlines(np.arange(h.shape[0]+1), 0, h.shape[1], color='k', lw=.5)
+    ax.set_xlim(0, h.shape[1])
+    ax.set_ylim(0, h.shape[0])
+
+
+# HAPLOTYPE SHARING
+###################
+
+
+def split_flanks(h, pos, pos_core):
+    """Split a haplotype array into two flanks on some core position."""
+
+    h = np.asarray(h)
+    pos = np.asarray(pos)
+    idx_split = bisect.bisect_left(pos, pos_core)
+    dist_right = pos[idx_split:] - pos_core
+    dist_left = pos_core - pos[:idx_split]
+    haps_right = allel.HaplotypeArray(h[idx_split:, :])
+    # reverse so both flanks have same orientation w.r.t core
+    haps_left = allel.HaplotypeArray(h[:idx_split, :][::-1, :])
+    return dist_right, dist_left, haps_right, haps_left
+
+
+def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
+    """Analyse sharing between haplotypes in prefix sorted order."""
+
+    haps_ehh = allel.HaplotypeArray(haps_ehh)
+    haps_mut = allel.HaplotypeArray(haps_mut)
+    n_haplotypes = haps_ehh.n_haplotypes
+    assert n_haplotypes == haps_mut.n_haplotypes
+
+    # sort by prefix
+    idx_sorted = haps_ehh.prefix_argsort()
+    haps_ehh_sorted = haps_ehh[:, idx_sorted]
+    haps_mut_sorted = haps_mut[:, idx_sorted]
+
+    # compute length (no. variants) of shared prefix between neighbours
+    nspl = allel.opt.stats.neighbour_shared_prefix_lengths_int8(
+        np.asarray(haps_ehh_sorted, dtype='i1')
+    )
+
+    # compute length (physical distance) of shared prefix between neighbours
+    # TODO check if nspl is at or beyond point of divergence
+    nspd = np.asarray(dist_ehh)[nspl + 1]
+
+    # compute number of mutations on shared haplotypes
+    muts = np.zeros_like(nspl)
+    for i in range(n_haplotypes - 1):
+        # distance at which haplotypes diverge
+        d = nspd[i]
+        # index into mutations array where haplotypes diverge
+        ix = bisect.bisect_left(dist_mut, d)
+        # number of mutations
+        m = np.count_nonzero(
+            haps_mut_sorted[:ix, i] != haps_mut_sorted[:ix, i+1])
+        muts[i] = m
+
+    return idx_sorted, nspl, nspd, muts
+
+
+def fig_neighbour_haplotype_sharing(cut_dist, fig=None):
+
+    if fig is None:
+        fig = plt.figure()
+

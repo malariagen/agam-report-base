@@ -915,7 +915,7 @@ def split_flanks(h, pos, pos_core):
     return dist_right, dist_left, haps_right, haps_left
 
 
-def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
+def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut, jitter=False):
     """Analyse sharing between haplotypes in prefix sorted order."""
 
     haps_ehh = allel.HaplotypeArray(haps_ehh)
@@ -933,10 +933,8 @@ def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
         np.asarray(haps_ehh_sorted, dtype='i1')
     )
 
-    # compute length (physical distance) of shared prefix between neighbours
-    # TODO check if nspl is at or beyond point of divergence
-    # N.B., need to watch where EHH continues up to end of data
-    nspd = np.asarray(dist_ehh)[(nspl + 1).clip(max=dist_ehh.shape[0] - 1)]
+    # compute length (physical distance)
+    nspd = _shared_distance(nspl, dist_ehh, jitter=jitter)
 
     # compute number of mutations on shared haplotypes
     muts = np.zeros_like(nspl)
@@ -944,7 +942,7 @@ def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
         # distance at which haplotypes diverge
         d = nspd[i]
         # index into mutations array where haplotypes diverge
-        ix = bisect.bisect_left(dist_mut, d)
+        ix = bisect.bisect_right(dist_mut, d)
         # number of mutations
         m = np.count_nonzero(
             haps_mut_sorted[:ix, i] != haps_mut_sorted[:ix, i+1])
@@ -953,7 +951,20 @@ def neighbour_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
     return idx_sorted, nspl, nspd, muts
 
 
+def haplotype_accessible_length(spd, core_pos, is_accessible, flank):
+    spd_accessible = np.zeros_like(spd)
+    for i in range(spd.shape[0]):
+        d = spd[i]
+        if flank == 'right':
+            da = np.count_nonzero(is_accessible[core_pos - 1:core_pos + d - 1])
+        else:
+            da = np.count_nonzero(is_accessible[core_pos - d - 1:core_pos - 1])
+        spd_accessible[i] = da
+    return spd_accessible
+
+
 def fig_neighbour_haplotype_sharing(nspd, muts, haps_display, pop_colors,
+                                    nspd_accessible=None,
                                     haps_display_vlbl=None,
                                     nspd_cut=None,
                                     nspd_ylim=None,
@@ -1026,6 +1037,7 @@ def fig_neighbour_haplotype_sharing(nspd, muts, haps_display, pop_colors,
     if muts_ylim:
         ax_muts.set_ylim(*muts_ylim)
     ax_muts.set_ylabel('No. mutations')
+    ax_muts.grid(axis='y')
 
     # plot t_hat
     ############
@@ -1033,7 +1045,11 @@ def fig_neighbour_haplotype_sharing(nspd, muts, haps_display, pop_colors,
     ax_that = fig.add_subplot(gs[2])
     sns.despine(ax=ax_that, offset=5, bottom=True)
     x = np.arange(0, n_haplotypes - 1) + .5
-    that = (1 + muts) / (2 * ((nspd * rr) + (nspd * mu)))
+    if nspd_accessible is not None:
+        d = nspd_accessible
+    else:
+        d = nspd
+    that = (1 + muts) / (2 * ((d * rr) + (d * mu)))
     ax_that.bar(x, that, width=1, align='edge', color='k')
     ax_that.set_xlim(0, n_haplotypes)
     ax_that.set_xticks([])
@@ -1041,6 +1057,7 @@ def fig_neighbour_haplotype_sharing(nspd, muts, haps_display, pop_colors,
     if that_ylim:
         ax_that.set_ylim(*that_ylim)
     ax_that.set_ylabel('$\hat{t}$', rotation=0, ha='right', va='center')
+    ax_that.grid(axis='y')
 
     # plot haplotype colors
     #######################
@@ -1068,7 +1085,30 @@ def fig_neighbour_haplotype_sharing(nspd, muts, haps_display, pop_colors,
     gs.tight_layout(fig, h_pad=0)
 
 
-def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
+def _shared_distance(spl, dist, jitter=False):
+    spd = np.empty_like(spl, dtype='i4')
+    n = dist.shape[0]
+    for i in range(spl.shape[0]):
+        l = spl[i]
+        if l >= n:
+            # homozygosity extends beyond end of data
+            d = dist[-1]
+        else:
+            max_dist = dist[l]
+            if jitter:
+                if l > 0:
+                    min_dist = dist[l-1]
+                else:
+                    min_dist = 1
+                # use uniform approximation to estimate position of EHH break
+                d = min_dist + (np.random.random() * (max_dist - min_dist))
+            else:
+                d = max_dist
+        spd[i] = d
+    return spd
+
+
+def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut, jitter=False):
     """Analyse sharing between all haplotype pairs."""
 
     haps_ehh = allel.HaplotypeArray(haps_ehh)
@@ -1082,9 +1122,7 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
     )
 
     # compute length (physical distance) of shared prefix between neighbours
-    # TODO check if nspl is at or beyond point of divergence
-    # N.B., need to watch where EHH continues up to end of data
-    pspd = np.asarray(dist_ehh)[(pspl + 1).clip(max=dist_ehh.shape[0] - 1)]
+    pspd = _shared_distance(pspl, dist_ehh, jitter=jitter)
 
     # compute number of mutations on shared haplotypes
     muts = np.zeros_like(pspl)
@@ -1094,7 +1132,7 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut):
             # distance at which haplotypes diverge
             d = pspd[ix]
             # index into mutations array where haplotypes diverge
-            idx_mut_div = bisect.bisect_left(dist_mut, d)
+            idx_mut_div = bisect.bisect_right(dist_mut, d)
             # number of mutations
             m = np.count_nonzero(haps_mut[:idx_mut_div, i] != haps_mut[:idx_mut_div, j])
             muts[ix] = m

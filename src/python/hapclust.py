@@ -1140,6 +1140,11 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut, jitter=Fa
     return pspl, pspd, muts
 
 
+# The cladogram function below works but not so well when distance is plotted on a logarithmic
+# scale, where some lines can end up overlapping. Will leave commented out for now as a useful
+# reference on how to make use of return values from scipy's dendrogram function.
+
+
 # def cladogram(z, fill_threshold=0, leaf_height=0, leaf_width=10,
 #               colors=None, default_color='k', ax=None, **kwargs):
 #
@@ -1214,6 +1219,13 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut, jitter=Fa
 
 def cladogram(z, fill_threshold=0, default_color='k', colors=None, leaf_height=0,
               plot_leaf_func=None, count_sort=True, ax=None, plot_kws=None, fill_kws=None):
+    """Plot a cladogram.
+
+    Parameters
+    ----------
+    TODO
+
+    """
 
     # setup axes
     if ax is None:
@@ -1331,6 +1343,7 @@ def _plot_clade(node, offset, apex, fill_threshold, ax, plot_kws, fill_kws, defa
             x = [right_apex, apex]
             y = [right.dist, node.dist]
             ax.plot(x, y, color=right_color, **plot_kws)
+
         # plot filled wedge
         else:
             x = [left_apex, apex]

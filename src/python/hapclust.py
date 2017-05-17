@@ -1138,3 +1138,211 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut, jitter=Fa
             muts[ix] = m
 
     return pspl, pspd, muts
+
+
+# def cladogram(z, fill_threshold=0, leaf_height=0, leaf_width=10,
+#               colors=None, default_color='k', ax=None, **kwargs):
+#
+#     if ax is None:
+#         fig, ax = plt.subplots()
+#
+#     # compute the dendrogram
+#     if colors is not None and 'link_color_func' not in kwargs:
+#         if not isinstance(colors, np.ndarray):
+#             colors = np.array(list(colors), dtype=object)
+#         if colors.ndim == 1:
+#             pass
+#         elif colors.ndim == 2 and colors.shape[1] == 3:
+#             # convert to hex for hashability
+#             colors = np.array([mpl.colors.rgb2hex(tuple(c)) for c in colors])
+#         else:
+#             raise TypeError('bad colors')
+#
+#         tree = scipy.cluster.hierarchy.to_tree(z)
+#
+#         def link_color_func(k):
+#             leaves = tree.get_descendant(k).pre_order()
+#             leaf_colors = set(colors[leaves])
+#             if len(leaf_colors) > 1:
+#                 return default_color
+#             else:
+#                 return colors[leaves[0]]
+#
+#         kwargs['link_color_func'] = link_color_func
+#
+#     # get args
+#     linewidth = kwargs.pop('lw', None)
+#     if linewidth is None:
+#         linewidth = kwargs.pop('linewidth', None)
+#
+#     r = scipy.cluster.hierarchy.dendrogram(z, no_plot=True, **kwargs)
+#
+#     # draw cladogram
+#     for x, y, c in zip(r['icoord'], r['dcoord'], r['color_list']):
+#         x1, x2, x3, x4 = x
+#         y1, y2, y3, y4 = y
+#         if y2 > fill_threshold:
+#             ax.plot([x1, (x2 + x3)/2, x4], [y1, y2, y4], color=c, linewidth=linewidth)
+#         else:
+#             ax.add_patch(mpl.patches.Polygon([[x1, 0],
+#                                               [x1, y1],
+#                                               [(x2 + x3)/2, y2],
+#                                               [x4, y4],
+#                                               [x4, 0]],
+#                                              color=c,
+#                                              linewidth=linewidth,
+#                                              zorder=-max(y)))
+#
+#     # draw leaves
+#     if leaf_height > 0:
+#         for i, l in enumerate(r['leaves']):
+#             if colors is not None:
+#                 c = colors[l]
+#             else:
+#                 c = default_color
+#             ax.add_patch(plt.Rectangle((i * 10 + 5 - leaf_width/2, -leaf_height),
+#                                        width=leaf_width,
+#                                        height=leaf_height,
+#                                        color=c,
+#                                        linewidth=0))
+#
+#     # tidy up
+#     ax.set_xlim(-5, len(r['leaves']) * 10 + 5)
+#
+#     return r
+
+
+def cladogram(z, fill_threshold=0, default_color='k', colors=None, leaf_height=0,
+              plot_leaf_func=None, count_sort=True, ax=None, plot_kws=None, fill_kws=None):
+
+    # setup axes
+    if ax is None:
+        _, ax = plt.subplots()
+
+    # obtain a tree for convenience
+    tree = scipy.cluster.hierarchy.to_tree(z)
+    n = len(tree.pre_order())
+
+    # normalize colors arg
+    if colors is not None:
+        if not isinstance(colors, np.ndarray):
+            colors = np.array(list(colors), dtype=object)
+        if colors.ndim == 1:
+            pass
+        elif colors.ndim == 2 and colors.shape[1] == 3:
+            # convert to hex for hashability
+            colors = np.array([mpl.colors.rgb2hex(tuple(c)) for c in colors])
+        else:
+            raise TypeError('bad colors')
+
+    # start plotting
+    if plot_kws is None:
+        plot_kws = dict()
+    if fill_kws is None:
+        fill_kws = dict()
+    if leaf_height > 0 and plot_leaf_func is None:
+        plot_leaf_func = leaf_plotter_rect(leaf_height)
+    _plot_clade(tree, offset=0, apex=None, fill_threshold=fill_threshold, ax=ax,
+                plot_kws=plot_kws, fill_kws=fill_kws, default_color=default_color, colors=colors,
+                plot_leaf_func=plot_leaf_func, count_sort=count_sort)
+
+    # tidy up
+    ax.set_xlim(0, n * 10)
+
+
+def leaf_plotter_rect(height):
+
+    def _plot(x, node, color, ax):
+        ax.add_patch(plt.Rectangle((x - 5, -height),
+                                   width=10,
+                                   height=height,
+                                   color=color,
+                                   linewidth=0))
+
+    return _plot
+
+
+def leaf_plotter_marker(**kwargs):
+
+    def _plot(x, node, color, ax):
+        k = kwargs.copy()
+        k.setdefault('color', color)
+        ax.plot([x], [0], **k)
+
+    return _plot
+
+
+def _plot_clade(node, offset, apex, fill_threshold, ax, plot_kws, fill_kws, default_color,
+                colors, plot_leaf_func, count_sort):
+
+    if node.is_leaf():
+        if plot_leaf_func is not None:
+            if colors is not None:
+                c = colors[node.id]
+            else:
+                c = default_color
+            plot_leaf_func(offset + 5, node, c, ax)
+
+    else:
+
+        # count sort the children
+        left, right = node.left, node.right
+        if count_sort:
+            if left.count > right.count:
+                left, right = right, left
+
+        # place the apex at the midpoint between the two child clades
+        if apex is None:
+            apex = offset + left.count * 10
+
+        # figure out where to place the apex of each child clade
+        left_offset = offset
+        if left.is_leaf():
+            left_apex = offset + 5
+        else:
+            left_apex = offset + min(left.left.count, left.right.count) * 10
+        right_offset = offset + left.count * 10
+        if right.is_leaf():
+            right_apex = right_offset + 5
+        else:
+            right_apex = right_offset + min(right.left.count, right.right.count) * 10
+
+        # figure out child colors
+        if colors is None:
+            left_color = default_color
+            right_color = default_color
+        else:
+            left_colors = set(colors[left.pre_order()])
+            if len(left_colors) > 1:
+                left_color = default_color
+            else:
+                left_color = list(left_colors)[0]
+            right_colors = set(colors[right.pre_order()])
+            if len(right_colors) > 1:
+                right_color = default_color
+            else:
+                right_color = list(right_colors)[0]
+
+        # plot lines
+        if node.dist > fill_threshold:
+            x = [left_apex, apex]
+            y = [left.dist, node.dist]
+            ax.plot(x, y, color=left_color, **plot_kws)
+            x = [right_apex, apex]
+            y = [right.dist, node.dist]
+            ax.plot(x, y, color=right_color, **plot_kws)
+        # plot filled wedge
+        else:
+            x = [left_apex, apex]
+            y = [left.dist, node.dist]
+            ax.fill_between(x, 0, y, color=left_color, zorder=-node.dist, **fill_kws)
+            x = [apex, right_apex]
+            y = [node.dist, right.dist]
+            ax.fill_between(x, 0, y, color=right_color, zorder=-node.dist, **fill_kws)
+
+        # recurse
+        kws = dict(fill_threshold=fill_threshold, ax=ax, plot_kws=plot_kws, fill_kws=fill_kws,
+                   default_color=default_color, colors=colors, plot_leaf_func=plot_leaf_func,
+                   count_sort=count_sort)
+        _plot_clade(left, offset=left_offset, apex=left_apex, **kws)
+        _plot_clade(right, offset=right_offset, apex=right_apex, **kws)

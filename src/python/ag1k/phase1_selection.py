@@ -40,31 +40,28 @@ def init(release_dir):
 
     # raw data 
     ##########
-    table_stems = {"hstats": "hstats_table_([A-Za-z0-9]+)_(.+)\.txt\.gz",
-                   "xpclr": "[A-Za-z0-9]+_(.+vs+.)\.xpclr\.txt\.gz"}
 
-    global ihs_raw, xpehh_raw, xpclr_raw, hstats_raw, dTjD_raw 
+    global ihs_raw, xpehh_raw, xpclr_raw, hstats_raw, dTjD_raw
     raw_dir = os.path.join(release_dir, 'raw')
     
-    for metric in ("ihs", "xpehh", "xpclr", "hstats", "dTjD"):
+    for metric in ("ihs", "xpehh", "hstats", "dTjD"):
 
         fn = os.path.join(raw_dir, '{metric}/output.zarr').format(metric=metric)
 
         if os.path.exists(fn):
             exec("{metric}_raw=zarr.open_group('{path}', 'r')".format(metric=metric, path=fn), globals())
-            continue
 
-        ## otherwise we can load tables?
-        #temp = {}
-        #output_dir = os.path.join(raw_dir, metric, 'output')
-        #files = os.listdir(output_dir)
-        #for f in files:
-        #    mm = re.search(table_stems[metric], f)
-        #    if mm is not None:
-        #        chrom, comp = mm.groups()
-        #        if chrom not in temp:
-        #            temp[chrom] = {}
-        #        temp[chrom][comp] = lambda: pandas.read_csv(os.path.join(output_dir, f), sep="\t")
-        #
-        #print("exec", metric, len(files), list(temp.keys())) 
-        #exec("{metric}_raw=temp".format(metric=metric))
+    # XPCLR has no zarr output.
+    output_dir = os.path.join(raw_dir, 'xpclr', 'output')
+    files = os.listdir(output_dir)
+
+    temp = {}
+    for f in files:
+        mm = re.search("([A-Za-z0-9]+)_(.+vs.+)\.xpclr\.txt\.gz", f)
+        if mm is not None:
+            chrom, comp = mm.groups()
+            if chrom not in temp:
+                temp[chrom] = {}
+            temp[chrom][comp] = pandas.read_csv(os.path.join(output_dir, f), sep="\t")
+
+    xpclr_raw = temp

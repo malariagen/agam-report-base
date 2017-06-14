@@ -35,8 +35,7 @@ def init(release_dir):
         fn = os.path.join(ws_dir, '{metric}.txt.gz').format(metric=metric)
 
         if os.path.exists(fn):
-            exec("{metric}_windowed=pandas.read_csv('{path}', sep='\t')".format(metric=metric, path=fn), globals())
-
+            exec("{metric}_windowed=pandas.read_csv('{path}', sep='\t').set_index(['chrom', 'start', 'stop'])".format(metric=metric, path=fn), globals())
 
     # raw data 
     ##########

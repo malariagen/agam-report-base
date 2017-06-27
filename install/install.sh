@@ -36,19 +36,20 @@ if [ ! -f texlive.installed ]; then
 
     # install additional packages
     tlmgr option repository ftp://tug.org/historic/systems/texlive/2016/tlnet-final
-    tlmgr install csquotes
-    tlmgr install biblatex
-    tlmgr install logreq
-    tlmgr install xstring
-    tlmgr install adjustbox
-    tlmgr install collectbox
-    tlmgr install todonotes
-    tlmgr install siunitx
-    tlmgr install tablefootnote
-    tlmgr install xifthen
-    tlmgr install ifmtarg
-    tlmgr install preprint
-    tlmgr install biber
+    tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
+    $tlmgr_install csquotes
+    $tlmgr_install biblatex
+    $tlmgr_install logreq
+    $tlmgr_install xstring
+    $tlmgr_install adjustbox
+    $tlmgr_install collectbox
+    $tlmgr_install todonotes
+    $tlmgr_install siunitx
+    $tlmgr_install tablefootnote
+    $tlmgr_install xifthen
+    $tlmgr_install ifmtarg
+    $tlmgr_install preprint
+    $tlmgr_install biber
 
     # mark successful installation
     touch texlive.installed

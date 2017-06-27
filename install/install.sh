@@ -18,18 +18,24 @@ if [ ! -f texlive.installed ]; then
     echo "[install] installing texlive"
 
     # clean up any previous
-    rm -rf texlive
+    rm -rvf texlive*
+    rm -rvf install*
 
     # download texlive
-    wget --no-clobber ftp://tug.org/historic/systems/texlive/2016/install-tl-unx.tar.gz
+    wget ftp://tug.org/historic/systems/texlive/2016/tlnet-final/install-tl-unx.tar.gz
 
     # unpack archive
     tar zxvf install-tl-unx.tar.gz
 
     # run installation
-    ./install-tl-20160523/install-tl --profile=../agam-report-base/install/texlive.profile
+    ./install-tl-20170413/install-tl \
+        -repository=ftp://tug.org/historic/systems/texlive/2016/tlnet-final \
+        -profile=../agam-report-base/install/texlive.profile \
+        -no-persistent-downloads \
+        -no-verify-downloads
 
     # install additional packages
+    tlmgr option repository ftp://tug.org/historic/systems/texlive/2016/tlnet-final
     tlmgr install csquotes
     tlmgr install biblatex
     tlmgr install logreq

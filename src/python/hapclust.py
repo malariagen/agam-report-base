@@ -2,6 +2,8 @@
 from __future__ import absolute_import, print_function, division
 import bisect
 import collections
+import functools
+import sys
 
 
 import numpy as np
@@ -11,9 +13,38 @@ import seaborn as sns
 import allel
 import graphviz
 import pyximport
-pyximport.install(setup_args=dict(include_dirs=np.get_include()),
-                  reload_support=True)
+
+
+# Hack pyximport to have default options for profiling and embedding signatures
+# in docstrings.
+# Anytime pyximport needs to build a file, it ends up calling
+# pyximport.pyximport.get_distutils_extension.  This function returns an object
+# which has a cython_directives attribute that may be set to a dictionary of
+# compiler directives for cython.
+
+_old_get_distutils_extension = pyximport.pyximport.get_distutils_extension
+
+
+@functools.wraps(_old_get_distutils_extension)
+def _get_distutils_extension_new(*args, **kwargs):
+    extension_mod, setup_args = _old_get_distutils_extension(*args, **kwargs)
+    if not hasattr(extension_mod, 'define_macros'):
+        extension_mod.define_macros = []
+    if not hasattr(extension_mod, 'cython_directives'):
+        extension_mod.cython_directives = {}
+    extension_mod.cython_directives.setdefault('embedsignature', True)
+    extension_mod.cython_directives.setdefault('profile', True)
+    extension_mod.cython_directives.setdefault('binding', True)
+    extension_mod.cython_directives.setdefault('linetrace', True)
+    extension_mod.define_macros.append(('CYTHON_TRACE', 1))
+    return extension_mod, setup_args
+
+
+pyximport.pyximport.get_distutils_extension = _get_distutils_extension_new
+
+pyximport.install(setup_args=dict(include_dirs=np.get_include()))
 from hapclust_opt import count_gametes
+from hapclust_opt import locate_breakpoints_by_4gametes_opt
 
 
 #########################
@@ -1359,3 +1390,116 @@ def _plot_clade(node, offset, apex, fill_threshold, ax, plot_kws, fill_kws, defa
                    count_sort=count_sort)
         _plot_clade(left, offset=left_offset, apex=left_apex, **kws)
         _plot_clade(right, offset=right_offset, apex=right_apex, **kws)
+
+
+import random
+
+
+def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, opt=False):
+    if opt:
+        return locate_breakpoints_by_4gametes_opt(h, randomize=randomize, seed=seed)
+
+    if randomize and seed is not None:
+        random.seed(seed)
+
+    # ensure wrapped as haplotype array
+    h = np.asarray(h)
+    assert h.ndim == 2
+    n = h.shape[0]
+    m = h.shape[1]
+
+    # setup splits
+    splits = list()
+    unique_splits = set()
+
+    # setup breakpoints
+    breaks = np.full(m, fill_value=n, dtype=int)
+
+    for i in range(n):
+
+        # find occurrences of reference allele
+        ref = (h[i] == 0) & (breaks == n)
+        c0 = set(np.nonzero(ref)[0])
+        n0 = len(c0)
+
+        # find occurences of alternate allele
+        alt = (h[i] == 1) & (breaks == n)
+        c1 = set(np.nonzero(alt)[0])
+        n1 = len(c1)
+
+        if n0 + n1 >= 4:
+
+            if n0 >= 2 and n1 >= 2:
+                # at least 2 occurrences of both ref and alt alleles, possible to observe 4 gametes
+
+                unique = True
+
+                # search all previous splits
+                for p0, p1 in splits:
+
+                    # bail out early if subset of previous split, no new information
+                    if c0.issubset(p0) and c1.issubset(p1):
+                        unique = False
+                        break
+
+                    # form sets of gametes
+                    g00 = c0.intersection(p0)
+                    g01 = c0.intersection(p1)
+                    g10 = c1.intersection(p0)
+                    g11 = c1.intersection(p1)
+                    gametes = g00, g01, g10, g11
+                    n_gametes = np.array([len(g) for g in gametes])
+
+                    # apply 4 gamete test
+                    if all(gametes):
+
+                        # randomize if more than one smallest class
+                        idx_smallest = np.nonzero(n_gametes == np.min(n_gametes))[0]
+                        if randomize and len(idx_smallest) > 1:
+                            idx_smallest = random.choice(idx_smallest)
+                        else:
+                            idx_smallest = idx_smallest[0]
+                        # smallest gamete class
+                        recombinants = gametes[idx_smallest]
+
+                        # set breakpoints
+                        breaks[list(recombinants)] = i
+
+                        # remove recombinants
+                        c0 -= recombinants
+                        c1 -= recombinants
+
+                # add to list of splits
+                if unique:
+                    split = frozenset(c0), frozenset(c1)
+                    splits.append(split)
+
+        else:
+            # less than 4 haplotypes remaining, cannot observe 4 gametes, special case
+
+            if n0 + n1 == 1:
+
+                # only one haplotype left, break now
+                recombinant = (c0 | c1).pop()
+                breaks[recombinant] = i
+                break
+
+            elif n0 == 1 and n1 == 1:
+
+                # break both in the pair
+                recombinants = c0 | c1
+                breaks[list(recombinants)] = i
+                break
+
+            elif n0 >= 1 and n1 >= 1:
+
+                # break haplotype carrying minor allele
+                recombinants = c0 if n0 < n1 else c1
+                if recombinants:
+                    breaks[list(recombinants)] = i
+                c0 -= recombinants
+                c1 -= recombinants
+
+    return breaks
+
+

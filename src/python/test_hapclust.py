@@ -9,39 +9,37 @@ import hapclust
 
 def test_locate_breakpoints_by_4gametes():
 
-    for opt in False, True:
+    def f(haps):
+        return hapclust.locate_breakpoints_by_4gametes(haps, randomize=False)
 
-        def f(haps):
-            return hapclust.locate_breakpoints_by_4gametes(haps, randomize=False, opt=opt)
+    h = [[0, 0, 1, 1],
+         [0, 1, 0, 1]]
+    ex = [1, 2, 2, 2]
+    assert_array_equal(ex, f(h))
 
-        h = [[0, 0, 1, 1],
-             [0, 1, 0, 1]]
-        ex = [1, 2, 2, 2]
-        assert_array_equal(ex, f(h))
+    h = [[0, 0, 1, 1],
+         [0, 0, 0, 0],
+         [0, 1, 0, 1]]
+    ex = [2, 3, 3, 3]
+    assert_array_equal(ex, f(h))
 
-        h = [[0, 0, 1, 1],
-             [0, 0, 0, 0],
-             [0, 1, 0, 1]]
-        ex = [2, 3, 3, 3]
-        assert_array_equal(ex, f(h))
+    h = [[0, 0, 0, 0],
+         [0, 0, 1, 1],
+         [0, 1, 0, 1]]
+    ex = [2, 3, 3, 3]
+    assert_array_equal(ex, f(h))
 
-        h = [[0, 0, 0, 0],
-             [0, 0, 1, 1],
-             [0, 1, 0, 1]]
-        ex = [2, 3, 3, 3]
-        assert_array_equal(ex, f(h))
-
-        # handle less than 4 haplotypes left
-        h = [[0, 0, 1, 1],
-             [0, 1, 0, 1],
-             [0, 0, 0, 0],
-             [1, 0, 0, 0],
-             [0, 1, 0, 0],
-             [0, 1, 0, 0],
-             [0, 0, 1, 0],
-             [0, 0, 0, 0]]
-        ex = [1, 4, 6, 6]
-        assert_array_equal(ex, f(h))
+    # handle less than 4 haplotypes left
+    h = [[0, 0, 1, 1],
+         [0, 1, 0, 1],
+         [0, 0, 0, 0],
+         [1, 0, 0, 0],
+         [0, 1, 0, 0],
+         [0, 1, 0, 0],
+         [0, 0, 1, 0],
+         [0, 0, 0, 0]]
+    ex = [1, 4, 6, 6]
+    assert_array_equal(ex, f(h))
 
 #     h = [[0, 0, 0]]
 #     ex = [0, 0, 0]

@@ -32,11 +32,11 @@ def _get_distutils_extension_new(*args, **kwargs):
         extension_mod.define_macros = []
     if not hasattr(extension_mod, 'cython_directives'):
         extension_mod.cython_directives = {}
-    extension_mod.cython_directives.setdefault('embedsignature', True)
-    extension_mod.cython_directives.setdefault('profile', True)
-    extension_mod.cython_directives.setdefault('binding', True)
-    extension_mod.cython_directives.setdefault('linetrace', True)
-    extension_mod.define_macros.append(('CYTHON_TRACE', 1))
+    # extension_mod.cython_directives.setdefault('embedsignature', True)
+    # extension_mod.cython_directives.setdefault('profile', True)
+    # extension_mod.cython_directives.setdefault('binding', True)
+    # extension_mod.cython_directives.setdefault('linetrace', True)
+    # extension_mod.define_macros.append(('CYTHON_TRACE', 1))
     return extension_mod, setup_args
 
 
@@ -44,7 +44,6 @@ pyximport.pyximport.get_distutils_extension = _get_distutils_extension_new
 
 pyximport.install(setup_args=dict(include_dirs=np.get_include()))
 from hapclust_opt import count_gametes
-from hapclust_opt import locate_breakpoints_by_4gametes_opt
 
 
 #########################
@@ -1395,9 +1394,7 @@ def _plot_clade(node, offset, apex, fill_threshold, ax, plot_kws, fill_kws, defa
 import random
 
 
-def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, opt=False):
-    if opt:
-        return locate_breakpoints_by_4gametes_opt(h, randomize=randomize, seed=seed)
+def locate_breakpoints_by_4gametes(h, randomize=True, seed=None):
 
     if randomize and seed is not None:
         random.seed(seed)
@@ -1418,61 +1415,73 @@ def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, opt=False):
     for i in range(n):
 
         # find occurrences of reference allele
-        ref = (h[i] == 0) & (breaks == n)
-        c0 = set(np.nonzero(ref)[0])
-        n0 = len(c0)
+        c0 = ((h[i] == 0) & (breaks == n))
+        n0 = np.count_nonzero(c0)
 
         # find occurences of alternate allele
-        alt = (h[i] == 1) & (breaks == n)
-        c1 = set(np.nonzero(alt)[0])
-        n1 = len(c1)
+        c1 = ((h[i] == 1) & (breaks == n))
+        n1 = np.count_nonzero(c1)
 
         if n0 + n1 >= 4:
 
             if n0 >= 2 and n1 >= 2:
                 # at least 2 occurrences of both ref and alt alleles, possible to observe 4 gametes
 
-                unique = True
+                # optimisation: check if this is something we've seen before
+                split = c0.tobytes(), c1.tobytes()
+                if split in unique_splits:
+                    continue
 
                 # search all previous splits
                 for p0, p1 in splits:
 
-                    # bail out early if subset of previous split, no new information
-                    if c0.issubset(p0) and c1.issubset(p1):
-                        unique = False
-                        break
-
-                    # form sets of gametes
-                    g00 = c0.intersection(p0)
-                    g01 = c0.intersection(p1)
-                    g10 = c1.intersection(p0)
-                    g11 = c1.intersection(p1)
-                    gametes = g00, g01, g10, g11
-                    n_gametes = np.array([len(g) for g in gametes])
+                    # begin critical section
 
                     # apply 4 gamete test
-                    if all(gametes):
 
-                        # randomize if more than one smallest class
-                        idx_smallest = np.nonzero(n_gametes == np.min(n_gametes))[0]
-                        if randomize and len(idx_smallest) > 1:
-                            idx_smallest = random.choice(idx_smallest)
-                        else:
-                            idx_smallest = idx_smallest[0]
-                        # smallest gamete class
-                        recombinants = gametes[idx_smallest]
+                    g11 = c1 & p1
+                    n11 = np.count_nonzero(g11)
+                    if n11 == 0:
+                        continue
 
-                        # set breakpoints
-                        breaks[list(recombinants)] = i
+                    g01 = c0 & p1
+                    n01 = np.count_nonzero(g01)
+                    if n01 == 0:
+                        continue
 
-                        # remove recombinants
-                        c0 -= recombinants
-                        c1 -= recombinants
+                    g10 = c1 & p0
+                    n10 = np.count_nonzero(g10)
+                    if n10 == 0:
+                        continue
+
+                    g00 = c0 & p0
+                    n00 = np.count_nonzero(g00)
+                    if n00 == 0:
+                        continue
+
+                    # end critical section
+
+                    # randomize if more than one smallest class
+                    gametes = [g00, g01, g10, g11]
+                    n_gametes = np.array([n00, n01, n10, n11])
+                    idx_smallest = np.nonzero(n_gametes == np.min(n_gametes))[0]
+                    if randomize and len(idx_smallest) > 1:
+                        idx_smallest = random.choice(idx_smallest)
+                    else:
+                        idx_smallest = idx_smallest[0]
+                    # smallest gamete class
+                    recombinants = gametes[idx_smallest]
+
+                    # set breakpoints
+                    breaks[recombinants] = i
+
+                    # remove recombinants
+                    c0[recombinants] = False
+                    c1[recombinants] = False
 
                 # add to list of splits
-                if unique:
-                    split = frozenset(c0), frozenset(c1)
-                    splits.append(split)
+                unique_splits.add(split)
+                splits.append((c0, c1))
 
         else:
             # less than 4 haplotypes remaining, cannot observe 4 gametes, special case
@@ -1480,7 +1489,7 @@ def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, opt=False):
             if n0 + n1 == 1:
 
                 # only one haplotype left, break now
-                recombinant = (c0 | c1).pop()
+                recombinant = c0 | c1
                 breaks[recombinant] = i
                 break
 
@@ -1488,18 +1497,16 @@ def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, opt=False):
 
                 # break both in the pair
                 recombinants = c0 | c1
-                breaks[list(recombinants)] = i
+                breaks[recombinants] = i
                 break
 
             elif n0 >= 1 and n1 >= 1:
 
                 # break haplotype carrying minor allele
                 recombinants = c0 if n0 < n1 else c1
-                if recombinants:
-                    breaks[list(recombinants)] = i
-                c0 -= recombinants
-                c1 -= recombinants
+                if np.any(recombinants):
+                    breaks[recombinants] = i
+                    c0[recombinants] = False
+                    c1[recombinants] = False
 
     return breaks
-
-

@@ -18,31 +18,38 @@ if [ ! -f texlive.installed ]; then
     echo "[install] installing texlive"
 
     # clean up any previous
-    rm -rf texlive
+    rm -rvf texlive*
+    rm -rvf install*
 
     # download texlive
-    wget --no-clobber ftp://tug.org/historic/systems/texlive/2016/install-tl-unx.tar.gz
+    wget ftp://tug.org/historic/systems/texlive/2016/tlnet-final/install-tl-unx.tar.gz
 
     # unpack archive
     tar zxvf install-tl-unx.tar.gz
 
     # run installation
-    ./install-tl-20160523/install-tl --profile=../agam-report-base/install/texlive.profile
+    ./install-tl-20170413/install-tl \
+        -repository=ftp://tug.org/historic/systems/texlive/2016/tlnet-final \
+        -profile=../agam-report-base/install/texlive.profile \
+        -no-persistent-downloads \
+        -no-verify-downloads
 
     # install additional packages
-    tlmgr install csquotes
-    tlmgr install biblatex
-    tlmgr install logreq
-    tlmgr install xstring
-    tlmgr install adjustbox
-    tlmgr install collectbox
-    tlmgr install todonotes
-    tlmgr install siunitx
-    tlmgr install tablefootnote
-    tlmgr install xifthen
-    tlmgr install ifmtarg
-    tlmgr install preprint
-    tlmgr install biber
+    tlmgr option repository ftp://tug.org/historic/systems/texlive/2016/tlnet-final
+    tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
+    $tlmgr_install csquotes
+    $tlmgr_install biblatex
+    $tlmgr_install logreq
+    $tlmgr_install xstring
+    $tlmgr_install adjustbox
+    $tlmgr_install collectbox
+    $tlmgr_install todonotes
+    $tlmgr_install siunitx
+    $tlmgr_install tablefootnote
+    $tlmgr_install xifthen
+    $tlmgr_install ifmtarg
+    $tlmgr_install preprint
+    $tlmgr_install biber
 
     # mark successful installation
     touch texlive.installed

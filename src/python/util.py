@@ -315,7 +315,7 @@ def get_geneset_features(geneset_fn, chrom, start=None, stop=None):
 
 
 def plot_genes(genome, geneset_fn, chrom, start=1, stop=None, ax=None, height=.3, label=False,
-               labels=None, label_unnamed=True, barh_kwargs=None):
+               labels=None, label_unnamed=True, label_rotation=45, barh_kwargs=None):
 
     if stop is None:
         stop = len(genome[chrom])
@@ -355,10 +355,10 @@ def plot_genes(genome, geneset_fn, chrom, start=1, stop=None, ax=None, height=.3
             if x > stop:
                 x = stop
             if gene.strand == '+':
-                rotation = 45
+                rotation = label_rotation
                 y = .5 + height
                 ax.text(x, y, label, rotation=rotation, fontsize=6, ha='left', va='bottom')
             else:
-                rotation = -45
+                rotation = -label_rotation
                 y = .5 - height
                 ax.text(x, y, label, rotation=rotation, fontsize=6, ha='left', va='top')

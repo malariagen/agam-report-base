@@ -9,37 +9,51 @@ import hapclust
 
 def test_locate_breakpoints_by_4gametes():
 
-    def f(haps):
-        return hapclust.locate_breakpoints_by_4gametes(haps, randomize=False)
+    for reverse in False, True:
 
-    h = [[0, 0, 1, 1],
-         [0, 1, 0, 1]]
-    ex = [1, 2, 2, 2]
-    assert_array_equal(ex, f(h))
+        def f(haps, **kwargs):
+            kwargs.setdefault('randomize', False)
+            return hapclust.locate_breakpoints_by_4gametes(haps, reverse=reverse, **kwargs)
 
-    h = [[0, 0, 1, 1],
-         [0, 0, 0, 0],
-         [0, 1, 0, 1]]
-    ex = [2, 3, 3, 3]
-    assert_array_equal(ex, f(h))
+        h = [[0, 0, 1, 1],
+             [0, 1, 0, 1]]
+        ex = [1, 2, 2, 2]
+        assert_array_equal(ex, f(h))
 
-    h = [[0, 0, 0, 0],
-         [0, 0, 1, 1],
-         [0, 1, 0, 1]]
-    ex = [2, 3, 3, 3]
-    assert_array_equal(ex, f(h))
+        h = [[0, 0, 1, 1],
+             [0, 0, 0, 0],
+             [0, 1, 0, 1]]
+        ex = [2, 3, 3, 3]
+        assert_array_equal(ex, f(h))
 
-    # handle less than 4 haplotypes left
-    h = [[0, 0, 1, 1],
-         [0, 1, 0, 1],
-         [0, 0, 0, 0],
-         [1, 0, 0, 0],
-         [0, 1, 0, 0],
-         [0, 1, 0, 0],
-         [0, 0, 1, 0],
-         [0, 0, 0, 0]]
-    ex = [1, 4, 6, 6]
-    assert_array_equal(ex, f(h))
+        h = [[0, 0, 0, 0],
+             [0, 0, 1, 1],
+             [0, 1, 0, 1]]
+        ex = [2, 3, 3, 3]
+        assert_array_equal(ex, f(h))
+
+        # handle less than 4 haplotypes left
+        h = [[0, 0, 1, 1],
+             [0, 1, 0, 1],
+             [0, 0, 0, 0],
+             [1, 0, 0, 0],
+             [0, 1, 0, 0],
+             [0, 1, 0, 0],
+             [0, 0, 1, 0],
+             [0, 0, 0, 0]]
+        ex = [1, 4, 6, 6]
+        assert_array_equal(ex, f(h))
+
+        # test with p_parsimony
+        h = [[0, 0, 1, 1],
+             [0, 1, 0, 1],
+             [0, 1, 0, 1]]
+        ex = [1, 3, 2, 3]
+        assert_array_equal(ex, f(h, p_parsimony=[1, 1, 1]))
+        ex = [3, 3, 3, 3]
+        assert_array_equal(ex, f(h, p_parsimony=[0, 0, 0]))
+        ex = [2, 3, 3, 3]
+        assert_array_equal(ex, f(h, p_parsimony=[1, 0, 1]))
 
 #     h = [[0, 0, 0]]
 #     ex = [0, 0, 0]

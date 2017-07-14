@@ -1394,16 +1394,24 @@ def _plot_clade(node, offset, apex, fill_threshold, ax, plot_kws, fill_kws, defa
 import random
 
 
-def locate_breakpoints_by_4gametes(h, randomize=True, seed=None):
+def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, reverse=False, p_parsimony=1):
 
-    if randomize and seed is not None:
-        random.seed(seed)
-
-    # ensure wrapped as haplotype array
+    # check input
     h = np.asarray(h)
     assert h.ndim == 2
     n = h.shape[0]
     m = h.shape[1]
+
+    # set random seed
+    if randomize and seed is not None:
+        random.seed(seed)
+
+    # setup probability of parsimony
+    if isinstance(p_parsimony, (int, float)):
+        p_parsimony = np.full(n, fill_value=p_parsimony, dtype=float)
+    else:
+        p_parsimony = np.asarray(p_parsimony)
+        assert p_parsimony.shape[0] == n
 
     # setup splits
     splits = list()
@@ -1427,13 +1435,29 @@ def locate_breakpoints_by_4gametes(h, randomize=True, seed=None):
             if n0 >= 2 and n1 >= 2:
                 # at least 2 occurrences of both ref and alt alleles, possible to observe 4 gametes
 
+                # do we expect this variant to be parsimonious, i.e., single mutation only?
+                parsimonious = True
+                pp = p_parsimony[i]
+                if pp == 0:
+                    parsimonious = False
+                elif pp < 1:
+                    parsimonious = random.random() <= p_parsimony
+                if not parsimonious:
+                    continue
+
                 # optimisation: check if this is something we've seen before
                 split = c0.tobytes(), c1.tobytes()
                 if split in unique_splits:
                     continue
 
+                # setup iterator over previous splits
+                if reverse:
+                    it = iter(splits[::-1])
+                else:
+                    it = iter(splits)
+
                 # search all previous splits
-                for p0, p1 in splits:
+                for p0, p1 in it:
 
                     # begin critical section
 

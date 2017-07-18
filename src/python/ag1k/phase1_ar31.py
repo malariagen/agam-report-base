@@ -55,7 +55,9 @@ def init(release_dir):
     callset_phased_zarr_fn = os.path.join(haplotypes_dir, 'main', 'zarr2',
                                           'ag1000g.phase1.ar3.1.haplotypes')
     if os.path.exists(callset_phased_zarr_fn):
-        callset_phased = zarr.open_group(callset_phased_zarr_fn, mode='r')
+        print("zarr exists but skipping")
+        #print("loading {0} from zarr".format(callset_phased_zarr_fn))
+        #callset_phased = zarr.open_group(callset_phased_zarr_fn, mode='r')
 
     # haplotypes metadata
     haplotypes_fn = os.path.join(haplotypes_dir, 'haplotypes.meta.txt')

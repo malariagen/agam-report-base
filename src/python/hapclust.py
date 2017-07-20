@@ -1392,9 +1392,194 @@ def _plot_clade(node, offset, apex, fill_threshold, ax, plot_kws, fill_kws, defa
 
 
 import random
+import sys
 
 
-def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, reverse=False, p_parsimony=1):
+def debug(*msg):
+    print(*msg, file=sys.stdout)
+    sys.stdout.flush()
+
+
+def locate_recomb_4gr_both(h, idx_core, seed=None, include_core=False):
+    """Locate recombination events via the 4 gamete rule, searching both flanks of the core locus
+    simultaneously."""
+
+    # convenience
+    LEFT = 0
+    RIGHT = 1
+
+    # check input
+    h = np.asarray(h)
+    assert h.ndim == 2
+    n_variants = h.shape[0]
+    n_haplotypes = h.shape[1]
+
+    # set random seed
+    if seed is not None:
+        random.seed(seed)
+
+    # setup outputs - use -1 to indicate no break found yet
+    breaks_l = np.full(n_haplotypes, fill_value=-1, dtype=int)
+    breaks_r = np.full(n_haplotypes, fill_value=-1, dtype=int)
+
+    # keep a record of the variants we've already visited
+    visited = list()
+    visited_uq = set()
+    if include_core:
+        # obtain alleles at current variant
+        v = h[idx_core]
+        # find occurrences of reference allele
+        c0 = (v == 0)
+        # find occurrences of alternate allele
+        c1 = (v == 1)
+        # add to list of visited variants
+        visited.append((c0, c1))
+        visited_uq.add((c0.tobytes(), c1.tobytes()))
+
+    # setup indices of current variant on left and right flanks
+    idx_l = idx_core
+    idx_r = idx_core
+
+    # main loop
+    while True:
+
+        # determine if finished on either flank
+        broken_l = breaks_l >= 0
+        broken_r = breaks_r >= 0
+        boundscheck_l = idx_l == 0
+        boundscheck_r = idx_r == n_variants - 1
+        finished_l = boundscheck_l or np.all(broken_l)
+        finished_r = boundscheck_r or np.all(broken_r)
+
+        # bail if finished on both flanks
+        if finished_l and finished_r:
+            break
+
+        # decide whether to move left or right
+        move_choices = []
+        if not finished_l:
+            move_choices.append(LEFT)
+        if not finished_r:
+            move_choices.append(RIGHT)
+        move = random.choice(move_choices)
+
+        # move and update indices
+        if move == LEFT:
+            idx_l -= 1
+            i = idx_l
+            breaks = breaks_l
+            unbroken = ~broken_l
+        else:
+            idx_r += 1
+            i = idx_r
+            breaks = breaks_r
+            unbroken = ~broken_r
+
+        # obtain alleles at current variant
+        v = h[i]
+
+        # find occurrences of reference allele
+        c0 = (v == 0) & unbroken
+        n0 = np.count_nonzero(c0)
+
+        # find occurrences of alternate allele
+        c1 = (v == 1) & unbroken
+        n1 = np.count_nonzero(c1)
+
+        # further decisions depend on how many observations we have for the reference and
+        # alternate alleles
+
+        if n0 + n1 >= 4:
+
+            if n0 >= 2 and n1 >= 2:
+
+                # there are at least two observations of each allele, so possible to observe 4
+                # gametes
+
+                # optimisation: check if this is something we've seen before
+                if (c0.tobytes(), c1.tobytes()) in visited_uq:
+                    continue
+
+                # search all previously visited variants
+                for p0, p1 in visited:
+
+                    # begin critical performance section
+
+                    # apply 4 gamete test
+
+                    g11 = c1 & p1
+                    n11 = np.count_nonzero(g11)
+                    if n11 == 0:
+                        continue
+
+                    g01 = c0 & p1
+                    n01 = np.count_nonzero(g01)
+                    if n01 == 0:
+                        continue
+
+                    g10 = c1 & p0
+                    n10 = np.count_nonzero(g10)
+                    if n10 == 0:
+                        continue
+
+                    g00 = c0 & p0
+                    n00 = np.count_nonzero(g00)
+                    if n00 == 0:
+                        continue
+
+                    # end critical performance section
+
+                    # find the least frequent gamete class, picking at random if there is a tie
+                    gametes = [g00, g01, g10, g11]
+                    n_gametes = np.array([n00, n01, n10, n11])
+                    idx_smallest = np.nonzero(n_gametes == np.min(n_gametes))[0]
+                    if len(idx_smallest) > 1:
+                        idx_smallest = random.choice(idx_smallest)
+                    else:
+                        idx_smallest = idx_smallest[0]
+                    # this locates the least frequent gamete class
+                    recombinants = gametes[idx_smallest]
+
+                    # set breakpoints
+                    breaks[recombinants] = i
+
+                    # remove recombinants from further searching
+                    c0[recombinants] = False
+                    c1[recombinants] = False
+
+                    # debug('move', ['LEFT', 'RIGHT'][move], i,
+                    #       np.count_nonzero(broken_l), np.count_nonzero(broken_r))
+
+                # add to list of visited variants
+                visited.append((c0, c1))
+                visited_uq.add((c0.tobytes(), c1.tobytes()))
+
+        else:
+            # less than 4 haplotypes remaining, cannot observe 4 gametes, special case
+
+            if n0 + n1 == 1:
+
+                # only one haplotype left, break now
+                recombinant = c0 | c1
+                breaks[recombinant] = i
+
+            elif n0 == 1 and n1 == 1:
+
+                # break both in the pair
+                recombinants = c0 | c1
+                breaks[recombinants] = i
+
+            elif n0 >= 1 and n1 >= 1:
+
+                # break haplotype carrying minor allele
+                recombinants = c0 if n0 < n1 else c1
+                if np.any(recombinants):
+                    breaks[recombinants] = i
+
+    return breaks_l, breaks_r
+
+
+def locate_recomb_4gr_indep(h, randomize=True, seed=None, reverse=False, p_parsimony=1):
 
     # check input
     h = np.asarray(h)
@@ -1504,6 +1689,7 @@ def locate_breakpoints_by_4gametes(h, randomize=True, seed=None, reverse=False, 
                     c1[recombinants] = False
 
                 # add to list of splits
+                # TODO remake split after finding recombination
                 unique_splits.add(split)
                 splits.append((c0, c1))
 

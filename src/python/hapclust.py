@@ -1117,7 +1117,7 @@ def pairwise_haplotype_sharing(haps_ehh, haps_mut, dist_ehh, dist_mut, jitter=Fa
     assert n_haplotypes == haps_mut.n_haplotypes
 
     # compute length (no. variants) of shared prefix between pairs
-    pspl = allel.opt.stats.pairwise_shared_prefix_lengths_int8(
+    pspl = allel.opt.stats.pairwise_shared_prefix_lengths(
         np.asarray(haps_ehh, dtype='i1')
     )
 

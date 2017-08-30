@@ -449,6 +449,16 @@ class DebugLogger(object):
         self.out.flush()
 
 
+def _pairwise_haplotype_distance(h, metric='hamming'):
+    assert metric in ['hamming', 'jaccard']
+    dist = allel.pairwise_distance(h, metric=metric)
+    dist *= h.n_variants
+    dist = scipy.spatial.distance.squareform(dist)
+    # N.B., np.rint is **essential** here, otherwise can get weird rounding errors
+    dist = np.rint(dist).astype('i8')
+    return dist
+
+
 def graph_haplotype_network(h,
                             hap_colors='grey',
                             distance_metric='hamming',
@@ -527,12 +537,7 @@ def graph_haplotype_network(h,
     hap_counts = [len(s) for s in h_distinct_sets]
 
     # compute pairwise distance matrix
-    assert distance_metric in ['hamming', 'jaccard']
-    dist = allel.pairwise_distance(h_distinct, metric=distance_metric)
-    dist *= h.n_variants
-    dist = scipy.spatial.distance.squareform(dist)
-    # N.B., np.rint is **essential** here, otherwise can get weird rounding errors
-    dist = np.rint(dist).astype('i8')
+    dist = _pairwise_haplotype_distance(h_distinct, distance_metric)
 
     if network_method.lower() == 'mst':
 
@@ -789,9 +794,7 @@ def _remove_obsolete(h, orig_n_haplotypes, max_dist, log):
     while n_removed is None or n_removed > 0:
 
         # step 1 - compute distance
-        dist = allel.pairwise_distance(h, metric='hamming')
-        dist *= h.n_variants
-        dist = scipy.spatial.distance.squareform(dist).astype(int)
+        dist = _pairwise_haplotype_distance(h, metric='hamming')
 
         # step 2 - construct the minimum spanning network
         edges, alt_edges = minimum_spanning_network(dist, max_dist=max_dist)

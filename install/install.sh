@@ -50,6 +50,7 @@ if [ ! -f texlive.installed ]; then
     $tlmgr_install ifmtarg
     $tlmgr_install preprint
     $tlmgr_install biber
+    $tlmgr_install threeparttable
 
     # mark successful installation
     touch texlive.installed

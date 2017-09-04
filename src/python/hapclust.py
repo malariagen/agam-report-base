@@ -692,7 +692,7 @@ def graph_haplotype_network(h,
                      h_distinct,
                      variant_labels)
 
-    return graph
+    return graph, hap_counts
 
 
 def minimum_spanning_network(dist, max_dist=None, debug=False, debug_out=None):

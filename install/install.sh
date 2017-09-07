@@ -13,6 +13,9 @@ cd dependencies
 export PATH=./texlive/2016/bin/x86_64-linux:$PATH
 export PATH=./miniconda/bin:$PATH
 
+#TEXREPO=ftp://tug.org/historic/systems/texlive/2016/tlnet-final
+TEXREPO=https://ctanmirror.speedata.de/2017-08-17/systems/texlive/tlnet
+
 # install texlive
 if [ ! -f texlive.installed ]; then
     echo "[install] installing texlive"
@@ -22,20 +25,20 @@ if [ ! -f texlive.installed ]; then
     rm -rvf install*
 
     # download texlive
-    wget ftp://tug.org/historic/systems/texlive/2016/tlnet-final/install-tl-unx.tar.gz
+    wget ${TEXREPO}/install-tl-unx.tar.gz
 
     # unpack archive
     tar zxvf install-tl-unx.tar.gz
 
     # run installation
-    ./install-tl-20170413/install-tl \
-        -repository=ftp://tug.org/historic/systems/texlive/2016/tlnet-final \
+    ./install-tl-*/install-tl \
+        -repository=$TEXREPO \
         -profile=../agam-report-base/install/texlive.profile \
         -no-persistent-downloads \
         -no-verify-downloads
 
     # install additional packages
-    tlmgr option repository ftp://tug.org/historic/systems/texlive/2016/tlnet-final
+    tlmgr option repository $TEXREPO
     tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
     $tlmgr_install csquotes
     $tlmgr_install biblatex

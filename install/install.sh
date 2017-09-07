@@ -10,11 +10,11 @@ mkdir -pv dependencies
 cd dependencies
 
 # put dependencies on the path
-export PATH=./texlive/2016/bin/x86_64-linux:$PATH
+export PATH=./texlive/bin/x86_64-linux:$PATH
 export PATH=./miniconda/bin:$PATH
 
 #TEXREPO=ftp://tug.org/historic/systems/texlive/2016/tlnet-final
-TEXREPO=https://ctanmirror.speedata.de/2017-08-17/systems/texlive/tlnet
+TEXREPO=https://ctanmirror.speedata.de/2017-09-01/systems/texlive/tlnet
 
 # install texlive
 if [ ! -f texlive.installed ]; then

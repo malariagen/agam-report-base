@@ -5,7 +5,7 @@
 
 
 # ensure script errors if any command fails
-set -e
+set -xe
 
 
 # conda setup
@@ -44,7 +44,7 @@ if [ ! -f miniconda.installed ]; then
     conda config --add channels defaults
     conda config --add channels bioconda
     conda config --add channels conda-forge
-    conda upgrade --yes conda
+    conda update --yes conda
 
     # create default scientific Python environment
     conda create --yes --name=$CONDANAME python=3.6

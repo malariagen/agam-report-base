@@ -11,3 +11,5 @@ graphviz==0.8
 # not build for Python 3.6 on conda-forge
 petl==1.1.1
 petlx==1.0.3
+# not on conda-forge
+scikits.bootstrap==0.3.3

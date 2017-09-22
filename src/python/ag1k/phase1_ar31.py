@@ -26,7 +26,7 @@ def init(release_dir):
     # variation
     ###########
 
-    global callset, callset_pass
+    global callset, callset_pass, callset_zarr_fn, callset_pass_zarr_fn
     variation_dir = os.path.join(release_dir, 'variation')
 
     # main callset
@@ -42,7 +42,7 @@ def init(release_dir):
     # haplotypes
     ############
 
-    global callset_phased, tbl_haplotypes, lkp_haplotypes, df_haplotypes
+    global callset_phased, tbl_haplotypes, lkp_haplotypes, df_haplotypes, callset_phased_h5_fn
     haplotypes_dir = os.path.join(release_dir, 'haplotypes')
 
     # try HDF5 first
@@ -53,7 +53,7 @@ def init(release_dir):
 
     ## N.B., the Zarr data is not consistent with HDF5 or shapeit outputs,
     # it is based on a previous phasing run.
-    # 
+    #
     #callset_phased_zarr_fn = os.path.join(haplotypes_dir, 'main', 'zarr2',
     #                                      'ag1000g.phase1.ar3.1.haplotypes')
     #if os.path.exists(callset_phased_zarr_fn):

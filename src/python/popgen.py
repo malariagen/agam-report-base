@@ -1,85 +1,15 @@
 # -*- coding: utf-8 -*-
 import os
-from collections import MutableMapping
 import json
 import sys
 from contextlib import contextmanager
 import hashlib
 import inspect
+import random
+
+
 import allel
 import zarr
-
-
-class JSONFile(MutableMapping):
-
-    def __init__(self,
-                 path: str,
-                 overwrite: bool=False,
-                 load_kws: dict=None,
-                 dump_kws: dict=None):
-        """
-        A MutableMapping interface to a JSON file.
-
-        Parameters
-        ----------
-        path
-            File path.
-        overwrite
-            If True, replace existing file.
-        load_kws
-            Default keyword arguments when loading.
-        dump_kws
-            Default keyword arguments when dumping.
-
-        """
-        self.path = path
-        if load_kws is None:
-            load_kws = dict()
-        self.load_kws = load_kws
-        if dump_kws is None:
-            dump_kws = dict()
-        self.dump_kws = dump_kws
-        if overwrite or not os.path.exists(self.path):
-            self.dump(dict())
-
-    def load(self, **kwargs):
-        load_kws = self.load_kws.copy()
-        load_kws.update(kwargs)
-        with open(self.path, mode='r', encoding='utf8') as fp:
-            obj = json.load(fp, **load_kws)
-        return obj
-
-    def dump(self, obj, **kwargs):
-        dump_kws = self.dump_kws.copy()
-        dump_kws.update(kwargs)
-        with open(self.path, mode='w', encoding='utf8') as fp:
-            json.dump(obj, fp, **dump_kws)
-
-    def __getitem__(self, key):
-        d = self.load()
-        return d[key]
-
-    def __iter__(self):
-        d = self.load()
-        return iter(d)
-
-    def __len__(self):
-        d = self.load()
-        return len(d)
-
-    def __setitem__(self, key, value):
-        d = self.load()
-        d[key] = value
-        self.dump(d)
-
-    def __delitem__(self, key):
-        d = self.load()
-        del d[key]
-        self.dump(d)
-
-    def __repr__(self):
-        with open(self.path, mode='r', encoding='utf8') as fp:
-            return fp.read()
 
 
 def _check_path_exists(path):
@@ -368,54 +298,22 @@ class PopulationAnalysis(object):
 
         return r
 
-    def allele_counts(self, contig, pop=None, callset='main', max_allele=3, gt_name=None):
-
-        # setup parameters
-        params = dict(
-            contig=contig,
-            pop=pop,
-            callset=self._get_callset(callset),
-            max_allele=max_allele,
-            gt_name=gt_name,
-        )
-
-        # hash and check cache
-        cache_group = inspect.currentframe().f_code.co_name
-        cache_key = _hash_params(params)
-        try:
-            ac = self.cache_load(cache_group, cache_key)
-
-        except CacheMiss:
-            self.log('computing', cache_group, cache_key)
-
-            callset_path = self._get_callset_path(callset)
-            with _open_callset_context(callset_path) as callset:
-
-                # get genotype data
-                gt = _get_genotype_dataset(callset, contig, gt_name)
-
-                # deal with pop
-                sample_indices = None
-                if pop:
-                    sample_indices = self._get_sample_indices(callset, pop)
-
-                # run computation
-                ac = gt.count_alleles(max_allele=max_allele, subpop=sample_indices).compute()
-
-                # save in cache
-                self.cache_save(cache_group, cache_key, ac)
-
-        return allel.AlleleCountsArray(ac)
-
-    def _get_sample_indices(self, callset, pop):
+    def _get_sample_indices(self, callset, pop, downsample, seed):
         samples = _get_samples_list(callset)
         df_pop = self.load_sample_data_joined(pop=pop)
         pop_samples = df_pop.index.values
         sample_indices = [samples.index(s) for s in pop_samples]
+        if downsample is not None:
+            if seed is not None:
+                random.seed(seed)
+            if downsample > len(sample_indices):
+                raise ValueError('not enough samples (%s) to down-sample (%s) population %r'
+                                 % (len(sample_indices), downsample, pop))
+            sample_indices = sorted(random.sample(sample_indices, downsample))
         return sample_indices
 
     def cache_save(self, cache_group, cache_key, data, names=None):
-        self.log('saving', cache_group, cache_key)
+        self.log('saving', cache_group, cache_key[:7])
         cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
         group = cache.require_group(cache_group)
         if names is None:
@@ -439,27 +337,123 @@ class PopulationAnalysis(object):
         result = group[cache_key]
         if '__ok__' not in result.attrs:
             raise CacheMiss
-        self.log('loading', cache_group, cache_key)
+        self.log('loading', cache_group, cache_key[:7])
         if names is None:
             return result[:]
         else:
             return tuple(result[n][:] for n in names)
+
+    def allele_counts(self, contig, pop=None, callset='main', max_allele=3, gt_name=None,
+                      downsample=None, seed=42):
+
+        # setup parameters
+        params = dict(
+            contig=contig,
+            pop=pop,
+            callset=self._get_callset(callset),
+            max_allele=max_allele,
+            gt_name=gt_name,
+            downsample=downsample,
+            seed=seed,
+        )
+
+        # hash and check cache
+        cache_group = inspect.currentframe().f_code.co_name
+        cache_key = _hash_params(params)
+        try:
+            ac = self.cache_load(cache_group, cache_key)
+
+        except CacheMiss:
+            self.log('computing', cache_group, cache_key[:7])
+
+            callset_path = self._get_callset_path(callset)
+            with _open_callset_context(callset_path) as callset:
+
+                # get genotype data
+                gt = _get_genotype_dataset(callset, contig, gt_name)
+
+                # deal with pop
+                sample_indices = None
+                if pop:
+                    sample_indices = self._get_sample_indices(callset, pop, downsample, seed)
+
+                # run computation
+                ac = gt.count_alleles(max_allele=max_allele, subpop=sample_indices).compute()
+
+                # save in cache
+                self.cache_save(cache_group, cache_key, ac)
+
+        return allel.AlleleCountsArray(ac)
+
+    def windowed_diversity(self, contig, window_size, window_start=None,
+                           window_stop=None, window_step=None, pop=None, callset='main',
+                           downsample=None, seed=42, max_allele=3, gt_name=None,
+                           equally_accessible=False):
+        """TODO"""
+
+        # setup parameters
+        params = dict(
+            contig=contig,
+            window_size=window_size,
+            window_start=window_start,
+            window_stop=window_stop,
+            window_step=window_step,
+            pop=pop,
+            callset=self._get_callset(callset),
+            max_allele=max_allele,
+            gt_name=gt_name,
+            downsample=downsample,
+            seed=seed,
+            equally_accessible=equally_accessible,
+        )
+
+        # hash and check cache
+        cache_group = inspect.currentframe().f_code.co_name
+        cache_key = _hash_params(params)
+        try:
+            result = self.cache_load(cache_group, cache_key)
+
+        except CacheMiss:
+            self.log('computing', cache_group, cache_key[:7])
+
+            # load allele counts
+            ac = self.allele_counts(contig=contig, pop=pop, callset=callset,
+                                    downsample=downsample, seed=seed, max_allele=max_allele,
+                                    gt_name=gt_name)
+
+            # load variant positions
+            with self.open_callset(callset) as callset:
+                pos_path = '/'.join([contig, 'variants', 'POS'])
+                pos = callset[pos_path][:]
+
+            # setup windows
+            if equally_accessible:
+                # TODO
+
+
+            else:
+                import allel.stats.window
+                windows = allel.stats.window.position_windows(pos=pos, size=window_size,
+                                                              start=window_start,
+                                                              stop=window_stop, step=window_step)
+
+
 
 
 class CacheMiss(Exception):
     pass
 
 
-def _get_genotype_dataset(callset, contig, dataset_name):
+def _get_genotype_dataset(callset, contig, gt_name):
     # acommodate different names for the genotype dataset
     gt = None
-    if dataset_name:
-        gt_path = '/'.join([contig, 'calldata', dataset_name])
+    if gt_name:
+        gt_path = '/'.join([contig, 'calldata', gt_name])
         if gt_path in callset:
             gt = callset[gt_path]
     else:
-        for dataset_name in 'genotype', 'GT':
-            gt_path = '/'.join([contig, 'calldata', dataset_name])
+        for gt_name in 'genotype', 'GT':
+            gt_path = '/'.join([contig, 'calldata', gt_name])
             if gt_path in callset:
                 gt = callset[gt_path]
     if gt is None:
@@ -477,5 +471,5 @@ def _get_samples_list(callset):
 
 def _hash_params(params):
     s = json.dumps(params, indent=4, sort_keys=True, ensure_ascii=True, skipkeys=False)
-    k = hashlib.md5(s.encode('ascii')).hexdigest()
+    k = hashlib.sha1(s.encode('ascii')).hexdigest()
     return k

@@ -622,6 +622,55 @@ class PopulationAnalysis(object):
 
         return allel.AlleleCountsArray(result)
 
+    # TODO __repr__
+
+    def windowed_diversity(self, chrom, window_size, window_start=None, window_stop=None,
+                           window_step=None, pop=None, callset=Key.MAIN, downsample=None,
+                           seed=None, max_allele=3, dataset_name=None, equally_accessible=True):
+        """TODO"""
+
+        # determine which samples to include
+        samples, sample_indices = self.locate_samples(callset=callset, pop=pop,
+                                                      downsample=downsample, seed=seed)
+
+        # setup parameters
+        params = dict(
+            chrom=chrom,
+            window_size=window_size,
+            window_start=window_start,
+            window_stop=window_stop,
+            window_step=window_step,
+            # N.B., include full callset config here in case it gets changed
+            callset=self.config.get_callset(callset),
+            samples=samples,
+            max_allele=max_allele,
+            dataset_name=dataset_name,
+            equally_accessible=equally_accessible,
+        )
+
+        # check cache
+        cache_group = inspect.currentframe().f_code.co_name
+        params_doc, cache_key = hash_params(params)
+
+        try:
+            result = self.cache_load(cache_group, cache_key, names=['windows', 'pi'])
+
+        except CacheMiss:
+
+            # load allele counts
+            ac = self.count_alleles(chrom=chrom, callset=callset, pop=pop, downsample=downsample,
+                                    seed=seed, max_allele=max_allele, dataset_name=dataset_name)
+
+            # TODO load variant positions
+
+            # TODO setup windows
+
+            # TODO run windowed computation
+
+            # TODO save result
+
+        # TODO return result
+
 
 class CacheMiss(Exception):
     pass

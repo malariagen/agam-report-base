@@ -5,6 +5,7 @@ import h5py
 import zarr
 import yaml
 import hashlib
+import allel
 
 
 def check_path_exists(path):
@@ -84,11 +85,30 @@ def close_callset(callset):
 
 
 def hash_params(params):
-    s = yaml.dump(params)
+    s = yaml.dump(params, default_flow_style=False)
     k = hashlib.md5(s.encode('ascii')).hexdigest()
-    return k
+    return s, k
 
 
 def get_genotype_array(callset, chrom, dataset_name):
-    # TODO
-    pass
+
+    gt = None
+
+    # specified dataset name
+    if dataset_name:
+        gt_path = '/'.join([chrom, 'calldata', dataset_name])
+        if gt_path in callset:
+            gt = callset[gt_path]
+
+    # guess dataset name
+    else:
+        for dataset_name in 'genotype', 'GT':
+            gt_path = '/'.join([chrom, 'calldata', dataset_name])
+            if gt_path in callset:
+                gt = callset[gt_path]
+                break
+
+    if gt is None:
+        raise RuntimeError('Could not find genotype dataset for chromosome {!r}.'.format(chrom))
+
+    return allel.GenotypeDaskArray(gt)

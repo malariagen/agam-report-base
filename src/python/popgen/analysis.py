@@ -4,7 +4,6 @@
 # standard library imports
 import os
 import sys
-from typing import Mapping, List
 import random
 import inspect
 
@@ -19,17 +18,14 @@ import zarr
 
 
 # internal imports
-from .config import YAMLConfigFile
+from .config import YAMLConfigFile, Key, Format
 from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset, \
-    hash_params
+    hash_params, get_genotype_array
 
 
 class PopulationAnalysis(object):
 
-    def __init__(self,
-                 path: str,
-                 overwrite: bool=False,
-                 logfile=sys.stdout):
+    def __init__(self, path, overwrite=False, logfile=sys.stdout, cache_compressor=None):
         """TODO"""
 
         self.path = path
@@ -48,11 +44,16 @@ class PopulationAnalysis(object):
         self.log = Logger(logfile)
 
         # setup other instance attributes for lazy loading
-        self._genome_assembly: pyfasta.Fasta = None
-        self._genome_annotation: pandas.DataFrame = None
+        self._genome_assembly = None
+        self._genome_annotation = None
         self._sample_table = None
 
-    def get_abs_path(self, path):
+        # setup cache compressor
+        if cache_compressor is None:
+            cache_compressor = zarr.Blosc(cname='zstd', clevel=1, shuffle=0)
+        self.cache_compressor = cache_compressor
+
+    def abs_path(self, path):
         # relative paths treated as relative to analysis directory
         if os.path.isabs(path):
             abs_path = path
@@ -61,34 +62,34 @@ class PopulationAnalysis(object):
         return abs_path
 
     def set_genome_assembly(self,
-                            path: str,
-                            label: str=None,
-                            description: str=None,
-                            format: str='fasta'):
+                            path,
+                            label=None,
+                            description=None,
+                            format=Format.FASTA):
         """Set the reference genome assembly.
 
         Parameters
         ----------
-        path
+        path: str
             Path to assembly file. If given as a relative path, must be relative to the analysis
             directory.
-        label
+        label: str
             Name of the assembly.
-        description
+        description: str
             Description of the assembly.
-        format
+        format: str
             File format. Only 'fasta' currently supported.
 
         """
 
         # check format
-        format = format.lower()
-        if format != 'fasta':
+        format = str(format).lower()
+        if format != Format.FASTA:
             raise NotImplementedError("Format %r not currently supported." % format)
 
         # check valid fasta
         try:
-            abs_path = self.get_abs_path(path)
+            abs_path = self.abs_path(path)
             assembly = pyfasta.Fasta(abs_path, key_fn=lambda v: v.split()[0])
 
         except Exception as e:
@@ -106,19 +107,28 @@ class PopulationAnalysis(object):
                  .format(n_chroms, n_bases))
 
         # store configuration
-        config = dict(
-            path=path, label=label, description=description, format=format
-        )
+        config = {
+            Key.PATH: path,
+            Key.LABEL: label,
+            Key.DESCRIPTION: description,
+            Key.FORMAT: format
+        }
         self.config.set_genome_assembly(config)
 
         # TODO need to revalidate callsets, accessibility, ..., if change genome assembly?
 
     @property
-    def genome_assembly(self) -> pyfasta.Fasta:
-        """TODO"""
+    def genome_assembly(self):
+        """TODO
+
+        Returns
+        -------
+        pyfasta.Fasta
+
+        """
         if self._genome_assembly is None:
             config = self.config.get_genome_assembly()
-            path = self.get_abs_path(config['path'])
+            path = self.abs_path(config[Key.PATH])
             self._genome_assembly = pyfasta.Fasta(path, key_fn=lambda v: v.split()[0])
         return self._genome_assembly
 
@@ -126,20 +136,20 @@ class PopulationAnalysis(object):
         return np.asarray(self.genome_assembly[chrom])
 
     def set_genome_annotation(self,
-                              path: str,
-                              label: str=None,
-                              description: str=None,
-                              format: str='gff3'):
+                              path,
+                              label=None,
+                              description=None,
+                              format=Format.GFF3):
         """TODO"""
 
         # check format
-        format = format.lower()
-        if format != 'gff3':
+        format = str(format).lower()
+        if format != Format.GFF3:
             raise NotImplementedError("Format %r not currently supported." % format)
 
         # check valid gff3
         try:
-            abs_path = self.get_abs_path(path)
+            abs_path = self.abs_path(path)
             annotation = allel.gff3_to_dataframe(abs_path, attributes=['ID', 'Parent'])
 
         except Exception as e:
@@ -152,14 +162,18 @@ class PopulationAnalysis(object):
 
         # report some diagnostics
         n_features = len(annotation)
-        n_genes = np.count_nonzero(annotation['type'] == 'gene')
+        loc_gene = (annotation['type'] == 'gene')  # type: np.ndarray
+        n_genes = np.count_nonzero(loc_gene)
         self.log('Setting genome annotation; found {0:,} features ({1:,} genes).'
                  .format(n_features, n_genes))
 
         # store configuration
-        config = dict(
-            path=path, label=label, description=description, format=format
-        )
+        config = {
+            Key.PATH: path,
+            Key.LABEL: label,
+            Key.DESCRIPTION: description,
+            Key.FORMAT: format,
+        }
         self.config.set_genome_annotation(config)
 
     @property
@@ -169,28 +183,25 @@ class PopulationAnalysis(object):
             self._genome_annotation = self.load_genome_annotation(attributes=['ID', 'Parent'])
         return self._genome_annotation
 
-    def load_genome_annotation(self, **kwargs) -> pandas.DataFrame:
+    def load_genome_annotation(self, **kwargs):
         """TODO"""
         config = self.config.get_genome_annotation()
-        path = self.get_abs_path(config['path'])
+        path = self.abs_path(config[Key.PATH])
+        kwargs.setdefault('attributes', ['ID', 'Parent'])
         annotation = allel.gff3_to_dataframe(path, **kwargs)
         return annotation
 
-    def set_genome_accessibility(self,
-                                 path: str,
-                                 format: str='hdf5',
-                                 dataset_name: str='is_accessible',
-                                 label: str=None,
-                                 description: str=None):
+    def set_genome_accessibility(self, path, format=Format.HDF5, dataset_name='is_accessible',
+                                 label=None, description=None):
         """TODO"""
 
         # check format
-        format = format.lower()
-        if format != 'hdf5':
+        format = str(format).lower()
+        if format != Format.HDF5:
             raise NotImplementedError("Format %r not currently supported." % format)
 
         # check valid data
-        abs_path = self.get_abs_path(path)
+        abs_path = self.abs_path(path)
         try:
             accessibility = h5py.File(abs_path, mode='r')
 
@@ -205,7 +216,8 @@ class PopulationAnalysis(object):
             n_chroms = 0
             n_bases_accessible = 0
 
-            for chrom in sorted(self.genome_assembly):
+            chroms = sorted(self.genome_assembly)
+            for chrom in chroms:
 
                 if chrom in accessibility:
                     group = accessibility[chrom]
@@ -244,28 +256,32 @@ class PopulationAnalysis(object):
                  .format(n_chroms, n_bases_accessible))
 
         # store configuration
-        config = dict(
-            path=path, format=format, dataset_name=dataset_name, label=label,
-            description=description
-        )
+        config = {
+            Key.PATH: path,
+            Key.FORMAT: format,
+            Key.DATASET_NAME: dataset_name,
+            Key.LABEL: label,
+            Key.DESCRIPTION: description,
+        }
         self.config.set_genome_accessibility(config)
 
-    def load_genome_accessibility(self, chrom: str) -> np.ndarray:
+    def load_genome_accessibility(self, chrom):
         """TODO"""
-        config = self.config.get_genome_accessibility()
-        path = self.get_abs_path(config['path'])
+        conf = self.config.get_genome_accessibility()
+        path = self.abs_path(conf[Key.PATH])
+        dataset_name = conf[Key.DATASET_NAME]
         with h5py.File(path, mode='r') as accessibility:
-            is_accessible = accessibility[chrom][config['dataset_name']][:]
+            is_accessible = accessibility[chrom][dataset_name][:]
         return is_accessible
 
     def set_sample_table(self,
-                         path: str,
-                         index_col: str,
-                         name: str='main',
-                         format: str='csv',
-                         read_kws: dict=None,
-                         label: str=None,
-                         description: str=None):
+                         path,
+                         index_col,
+                         name=Key.MAIN,
+                         format=Format.CSV,
+                         read_kws=None,
+                         label=None,
+                         description=None):
         """TODO"""
 
         # check args
@@ -273,30 +289,36 @@ class PopulationAnalysis(object):
             read_kws = dict()
         else:
             read_kws = dict(read_kws)
+
         # force index_col into read keywords
         read_kws['index_col'] = index_col
+
         # help for tab-delimited formats
-        format = format.lower()
+        format = str(format).lower()
         if format in {'tsv', 'tab', 'txt', 'text'}:
-            format = 'csv'
+            format = Format.CSV
             read_kws.setdefault('sep', '\t')
 
         # check data can be read by pandas
-        abs_path = self.get_abs_path(path)
+        abs_path = self.abs_path(path)
         df = read_dataframe(path=abs_path, format=format, read_kws=read_kws)
 
         # log some diagnostics
-        self.log('Setting sample table {!r}; found {:,} rows.'
-                 .format(name, len(df)))
+        self.log('Setting sample table {!r}; found {:,} columns, {:,} rows.'
+                 .format(name, len(df.columns), len(df)))
 
         # store as attribute for convenience
-        if name == 'main':
+        if name == Key.MAIN:
             self._sample_table = df
 
         # store configuration
-        config = dict(
-            path=path, format=format, read_kws=read_kws, label=label, description=description
-        )
+        config = {
+            Key.PATH: path,
+            Key.FORMAT: format,
+            Key.READ_KWS: read_kws,
+            Key.LABEL: label,
+            Key.DESCRIPTION: description,
+        }
         self.config.set_sample_table(name, config)
 
     @property
@@ -305,12 +327,12 @@ class PopulationAnalysis(object):
             self._sample_table = self.load_sample_table()
         return self._sample_table
 
-    def load_sample_table(self, name: str='main'):
+    def load_sample_table(self, name=Key.MAIN):
         """TODO"""
         config = self.config.get_sample_table(name)
-        path = self.get_abs_path(config['path'])
-        read_kws = config['read_kws']
-        format = config['format']
+        path = self.abs_path(config[Key.PATH])
+        read_kws = config[Key.READ_KWS]
+        format = config[Key.FORMAT]
         df = read_dataframe(path=path, format=format, read_kws=read_kws)
         return df
 
@@ -323,8 +345,8 @@ class PopulationAnalysis(object):
             others = names[1:]
         else:
             names = sorted(self.config.get_sample_tables())
-            if 'main' in names:
-                first = 'main'
+            if Key.MAIN in names:
+                first = Key.MAIN
                 others = [n for n in names if n != first]
             else:
                 first = names[0]
@@ -338,23 +360,23 @@ class PopulationAnalysis(object):
 
         return df
 
-    def set_callset(self, path, format=None, name='main', phased=False, label=None,
-                    description=None):
+    def set_callset(self, path, format=None, name=Key.MAIN, phased=False, label=None,
+                    description=None, samples_path=None):
         """TODO"""
 
         # check format
-        abs_path = self.get_abs_path(path)
+        abs_path = self.abs_path(path)
         if format is None:
             format = guess_callset_format(abs_path)
         else:
-            format = format.lower()
-            if format not in {'hdf5', 'zarr'}:
+            format = str(format).lower()
+            if format not in {Format.HDF5, Format.ZARR}:
                 raise NotImplementedError("Format %r not currently supported." % format)
         # TODO auto extract vcf
 
         # check valid callset
         try:
-            callset = open_callset(abs_path, format=format)
+            root = open_callset(abs_path, format=format)
 
         except Exception as e:
             raise ValueError('An error occurred opening the callset: {}\n'
@@ -365,65 +387,75 @@ class PopulationAnalysis(object):
 
             n_chroms = 0
             n_variants = 0
-            samples = None
-            n_samples = 0
-            if 'samples' in callset:
-                samples = callset['samples'][:].tolist()
-                n_samples = len(samples)
+
+            if samples_path is None and 'samples' in root:
+                samples_path = 'samples'
 
             for chrom in sorted(self.genome_assembly):
-                if chrom in callset:
+                if chrom in root:
                     n_chroms += 1
 
                     # check variant positions
                     pos_path = 'variants/POS'
-                    if pos_path not in callset[chrom]:
-                        raise ValueError("Callset is missing POS for chromosome {!r}."
+                    if pos_path not in root[chrom]:
+                        raise ValueError("Callset is missing variants/POS for chromosome {!r}."
                                          .format(chrom))
-                    pos = callset[chrom][pos_path]
+                    pos = root[chrom][pos_path]
                     n_variants += pos.shape[0]
 
                     # check samples
-                    if 'samples' in callset[chrom] and samples is None:
-                        samples = callset[chrom]['samples'][:].tolist()
-                        n_samples = len(samples)
+                    if samples_path is None and 'samples' in root[chrom]:
+                        samples_path = '/'.join([chrom, 'samples'])
 
             if n_chroms == 0:
                 raise ValueError('No chromosome groups found in callset.')
 
-            if n_samples == 0:
+            # check samples
+            if samples_path:
+                samples = root[samples_path][:].tolist()
+                n_samples = len(samples)
+            else:
                 raise ValueError('No samples found in callset.')
 
         finally:
-            close_callset(callset)
+            close_callset(root)
 
         # report some diagnostics
         self.log('Setting callset {!r}; found {:,} chromosomes, {:,} samples, {:,} variants.'
                  .format(name, n_chroms, n_samples, n_variants))
 
         # store configuration
-        config = dict(
-            path=path, format=format, phased=phased, label=label, description=description
-        )
+        config = {
+            Key.PATH: path,
+            Key.FORMAT: format,
+            Key.PHASED: phased,
+            Key.LABEL: label,
+            Key.DESCRIPTION: description,
+            Key.SAMPLES_PATH: samples_path
+        }
         self.config.set_callset(name, config)
 
     def set_population(self,
-                       name: str,
-                       query: str=None,
-                       samples: List[str]=None,
+                       name,
+                       query=None,
+                       samples=None,
                        color=None,
-                       label: str=None,
-                       description: str=None):
+                       label=None,
+                       description=None):
         """TODO"""
 
         if query and samples:
             raise ValueError('Please provide either a query or a list of samples, not both.')
 
-        config = dict(color=color, label=label, description=description)
+        config = {
+            Key.COLOR: color,
+            Key.LABEL: label,
+            Key.DESCRIPTION: description,
+        }
         if samples:
             samples = list(samples)
             n_samples = len(samples)
-            config['samples'] = samples
+            config[Key.SAMPLES] = samples
 
         else:
             df = self.join_sample_tables()
@@ -431,21 +463,53 @@ class PopulationAnalysis(object):
             n_samples = len(df_pop)
             if n_samples == 0:
                 raise ValueError('Query does not match any samples.')
-            config['query'] = query
+            config[Key.QUERY] = query
 
         self.log('Setting population {!r}; found {:,} samples.'
                  .format(name, n_samples))
         self.config.set_population(name, config)
 
-    def get_callset_samples(self, callset='main'):
-        # TODO
-        pass
+    def open_callset(self, callset=Key.MAIN):
+        """TODO"""
+        config = self.config.get_callset(callset)
+        path = self.abs_path(config[Key.PATH])
+        format = config[Key.FORMAT]
+        if format == Format.HDF5:
+            root = h5py.File(path, mode='r')
+        elif format == Format.ZARR:
+            root = zarr.open_group(path, mode='r')
+        else:
+            raise RuntimeError('Unexpected format: {!r}.'.format(format))
+        return root
+
+    def get_callset_samples(self, callset=Key.MAIN):
+        """TODO"""
+        config = self.config.get_callset(callset)
+        samples_path = config[Key.SAMPLES_PATH]
+        root = self.open_callset(callset)
+        try:
+            samples = root[samples_path][:]
+            if samples.dtype.kind == 'S':
+                samples = samples.astype('U')
+            samples = samples.tolist()
+        finally:
+            close_callset(root)
+        return samples
 
     def get_population_samples(self, pop):
-        # TODO
-        pass
+        """TODO"""
+        config = self.config.get_population(pop)
+        query = config.get(Key.QUERY, None)
+        if query:
+            df = self.join_sample_tables()
+            df_pop = df.query(query)
+            samples = df_pop.index.values.tolist()
+        else:
+            samples = config[Key.SAMPLES]
+        return samples
 
-    def locate_samples(self, callset='main', pop=None, downsample=None, seed=None):
+    def locate_samples(self, callset=Key.MAIN, pop=None, downsample=None, seed=None):
+        """TODO"""
 
         callset_samples = self.get_callset_samples(callset)
         if pop:
@@ -477,15 +541,44 @@ class PopulationAnalysis(object):
 
         return samples, sample_indices
 
-    def cache_save(self, group, key, result, names=None):
-        # TODO
-        pass
+    def cache_save(self, cache_group, cache_key, params_doc, data, names=None):
+        # self.log('saving', cache_group, cache_key)
+        cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
+        group = cache.require_group(cache_group)
+        if names is None:
+            if cache_key in group:
+                del group[cache_key]
+            result = group.create_dataset(cache_key, dtype=data.dtype, shape=data.shape,
+                                          compressor=self.cache_compressor)
+            result[:] = data
+        else:
+            if cache_key in group:
+                del group[cache_key]
+            result = group.create_group(cache_key)
+            for n, d in zip(names, data):
+                ds = result.create_dataset(n, dtype=d.dtype, shape=d.shape,
+                                           compressor=self.cache_compressor)
+                ds[:] = d
+        # mark success
+        result.attrs['__params__'] = params_doc
 
-    def cache_load(self, group, key, names=None):
-        # TODO
-        pass
+    def cache_load(self, cache_group, cache_key, names=None):
+        cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
+        group = cache.require_group(cache_group)
+        if cache_key not in group:
+            self.log('computing', cache_group, cache_key)
+            raise CacheMiss
+        result = group[cache_key]
+        if '__params__' not in result.attrs:
+            self.log('computing', cache_group, cache_key)
+            raise CacheMiss
+        self.log('loading', cache_group, cache_key)
+        if names is None:
+            return result[:]
+        else:
+            return tuple(result[n][:] for n in names)
 
-    def count_alleles(self, chrom, callset='main', pop=None, max_allele=3, dataset_name=None,
+    def count_alleles(self, chrom, callset=Key.MAIN, pop=None, max_allele=3, dataset_name=None,
                       downsample=None, seed=None):
         """TODO"""
 
@@ -505,13 +598,12 @@ class PopulationAnalysis(object):
 
         # check cache
         cache_group = inspect.currentframe().f_code.co_name
-        cache_key = hash_params(params)
+        params_doc, cache_key = hash_params(params)
 
         try:
             result = self.cache_load(cache_group, cache_key)
 
         except CacheMiss:
-            self.log('computing', cache_group, cache_key)
 
             root = self.open_callset(callset)
 
@@ -526,7 +618,7 @@ class PopulationAnalysis(object):
                 close_callset(root)
 
             # save result
-            self.cache_save(cache_group, cache_key, result)
+            self.cache_save(cache_group, cache_key, params_doc, result)
 
         return allel.AlleleCountsArray(result)
 

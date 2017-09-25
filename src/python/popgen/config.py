@@ -21,7 +21,7 @@ class Key(object):
     MAIN = 'main'
     PATH = 'path'
     FORMAT = 'format'
-    DATASET_NAME = 'dataset_name'
+    DATASET = 'dataset'
     SAMPLES = 'samples'
     SAMPLES_PATH = 'samples_path'
     PHASED = 'phased'
@@ -30,6 +30,10 @@ class Key(object):
     DESCRIPTION = 'description'
     QUERY = 'query'
     COLOR = 'color'
+    DOWN_SAMPLE = 'down_sample'
+    RANDOM_SEED = 'random_seed'
+    GENOTYPE_DATASET = 'genotype_dataset'
+    MAX_ALLELE = 'max_allele'
 
 
 class Format(object):

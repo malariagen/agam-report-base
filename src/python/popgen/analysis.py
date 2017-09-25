@@ -20,7 +20,7 @@ import zarr
 # internal imports
 from .config import YAMLConfigFile, Key, Format
 from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset, \
-    hash_params, get_genotype_array
+    hash_params
 
 
 class PopulationAnalysis(object):
@@ -107,13 +107,13 @@ class PopulationAnalysis(object):
                  .format(n_chroms, n_bases))
 
         # store configuration
-        config = {
+        conf = {
             Key.PATH: path,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
             Key.FORMAT: format
         }
-        self.config.set_genome_assembly(config)
+        self.config.set_genome_assembly(conf)
 
         # TODO need to revalidate callsets, accessibility, ..., if change genome assembly?
 
@@ -127,8 +127,8 @@ class PopulationAnalysis(object):
 
         """
         if self._genome_assembly is None:
-            config = self.config.get_genome_assembly()
-            path = self.abs_path(config[Key.PATH])
+            conf = self.config.get_genome_assembly()
+            path = self.abs_path(conf[Key.PATH])
             self._genome_assembly = pyfasta.Fasta(path, key_fn=lambda v: v.split()[0])
         return self._genome_assembly
 
@@ -168,13 +168,13 @@ class PopulationAnalysis(object):
                  .format(n_features, n_genes))
 
         # store configuration
-        config = {
+        conf = {
             Key.PATH: path,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
             Key.FORMAT: format,
         }
-        self.config.set_genome_annotation(config)
+        self.config.set_genome_annotation(conf)
 
     @property
     def genome_annotation(self):
@@ -185,13 +185,13 @@ class PopulationAnalysis(object):
 
     def load_genome_annotation(self, **kwargs):
         """TODO"""
-        config = self.config.get_genome_annotation()
-        path = self.abs_path(config[Key.PATH])
+        conf = self.config.get_genome_annotation()
+        path = self.abs_path(conf[Key.PATH])
         kwargs.setdefault('attributes', ['ID', 'Parent'])
         annotation = allel.gff3_to_dataframe(path, **kwargs)
         return annotation
 
-    def set_genome_accessibility(self, path, format=Format.HDF5, dataset_name='is_accessible',
+    def set_genome_accessibility(self, path, format=Format.HDF5, dataset='is_accessible',
                                  label=None, description=None):
         """TODO"""
 
@@ -226,12 +226,12 @@ class PopulationAnalysis(object):
                     continue
 
                 # check dataset exists
-                if dataset_name not in group:
+                if dataset not in group:
                     raise ValueError('Could not find accessibility dataset for chromosome '
                                      '{!r}.'.format(chrom))
 
                 # check dataset type and shape
-                is_accessible = group[dataset_name]
+                is_accessible = group[dataset]
                 if is_accessible.dtype != bool:
                     raise ValueError('Expected bool dtype, found {!r}'
                                      .format(is_accessible.dtype))
@@ -256,22 +256,22 @@ class PopulationAnalysis(object):
                  .format(n_chroms, n_bases_accessible))
 
         # store configuration
-        config = {
+        conf = {
             Key.PATH: path,
             Key.FORMAT: format,
-            Key.DATASET_NAME: dataset_name,
+            Key.DATASET: dataset,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
         }
-        self.config.set_genome_accessibility(config)
+        self.config.set_genome_accessibility(conf)
 
     def load_genome_accessibility(self, chrom):
         """TODO"""
         conf = self.config.get_genome_accessibility()
         path = self.abs_path(conf[Key.PATH])
-        dataset_name = conf[Key.DATASET_NAME]
+        dataset = conf[Key.DATASET]
         with h5py.File(path, mode='r') as accessibility:
-            is_accessible = accessibility[chrom][dataset_name][:]
+            is_accessible = accessibility[chrom][dataset][:]
         return is_accessible
 
     def set_sample_table(self,
@@ -311,15 +311,17 @@ class PopulationAnalysis(object):
         if name == Key.MAIN:
             self._sample_table = df
 
+        # TODO use name as label if label is None
+
         # store configuration
-        config = {
+        conf = {
             Key.PATH: path,
             Key.FORMAT: format,
             Key.READ_KWS: read_kws,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
         }
-        self.config.set_sample_table(name, config)
+        self.config.set_sample_table(name, conf)
 
     @property
     def sample_table(self):
@@ -361,7 +363,7 @@ class PopulationAnalysis(object):
         return df
 
     def set_callset(self, path, format=None, name=Key.MAIN, phased=False, label=None,
-                    description=None, samples_path=None):
+                    description=None, samples_path=None, genotype_dataset=None, max_allele=3):
         """TODO"""
 
         # check format
@@ -376,7 +378,7 @@ class PopulationAnalysis(object):
 
         # check valid callset
         try:
-            root = open_callset(abs_path, format=format)
+            callset_root = open_callset(abs_path, format=format)
 
         except Exception as e:
             raise ValueError('An error occurred opening the callset: {}\n'
@@ -388,52 +390,81 @@ class PopulationAnalysis(object):
             n_chroms = 0
             n_variants = 0
 
-            if samples_path is None and 'samples' in root:
+            if samples_path is None and 'samples' in callset_root:
                 samples_path = 'samples'
 
             for chrom in sorted(self.genome_assembly):
-                if chrom in root:
+                if chrom in callset_root:
                     n_chroms += 1
 
-                    # check variant positions
-                    pos_path = 'variants/POS'
-                    if pos_path not in root[chrom]:
-                        raise ValueError("Callset is missing variants/POS for chromosome {!r}."
+                    # check variants and calldata groups
+                    if 'variants' not in callset_root[chrom]:
+                        raise ValueError("Callset is missing 'variants' group for chromosome {!r}."
                                          .format(chrom))
-                    pos = root[chrom][pos_path]
+                    variants = callset_root[chrom]['variants']
+                    if 'calldata' not in callset_root[chrom]:
+                        raise ValueError("Callset is missing 'calldata' group for chromosome {!r}."
+                                         .format(chrom))
+                    calldata = callset_root[chrom]['calldata']
+
+                    # check variant positions
+                    pos_dataset = 'POS'
+                    if pos_dataset not in variants:
+                        raise ValueError("Callset is missing 'variants/POS' for chromosome {!r}."
+                                         .format(chrom))
+                    pos = variants[pos_dataset]
                     n_variants += pos.shape[0]
 
                     # check samples
-                    if samples_path is None and 'samples' in root[chrom]:
+                    if samples_path is None and 'samples' in callset_root[chrom]:
                         samples_path = '/'.join([chrom, 'samples'])
+
+                    # check genotypes
+                    if genotype_dataset is None:
+                        for k in 'genotype', 'GT':
+                            if k in calldata:
+                                genotype_dataset = k
+                                break
+                    else:
+                        if genotype_dataset not in calldata:
+                            raise ValueError("Callset is missing 'calldata/{}' for chromosome {!r}."
+                                             .format(genotype_dataset, chrom))
 
             if n_chroms == 0:
                 raise ValueError('No chromosome groups found in callset.')
 
             # check samples
             if samples_path:
-                samples = root[samples_path][:].tolist()
+                samples = callset_root[samples_path][:].tolist()
                 n_samples = len(samples)
             else:
                 raise ValueError('No samples found in callset.')
 
+            # check genotypes
+            if genotype_dataset is None:
+                raise ValueError('No genotypes found in callset.')
+
         finally:
-            close_callset(root)
+            close_callset(callset_root)
 
         # report some diagnostics
         self.log('Setting callset {!r}; found {:,} chromosomes, {:,} samples, {:,} variants.'
                  .format(name, n_chroms, n_samples, n_variants))
 
+        # TODO use name as label if label is None
+
         # store configuration
-        config = {
+        conf = {
             Key.PATH: path,
             Key.FORMAT: format,
             Key.PHASED: phased,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
-            Key.SAMPLES_PATH: samples_path
+            Key.SAMPLES_PATH: samples_path,
+            Key.GENOTYPE_DATASET: genotype_dataset,
+            Key.MAX_ALLELE: max_allele,
         }
-        self.config.set_callset(name, config)
+        self.config.set_callset(name, conf)
 
     def set_population(self,
                        name,
@@ -441,21 +472,29 @@ class PopulationAnalysis(object):
                        samples=None,
                        color=None,
                        label=None,
-                       description=None):
+                       description=None,
+                       down_sample=None,
+                       random_seed=None):
         """TODO"""
 
         if query and samples:
             raise ValueError('Please provide either a query or a list of samples, not both.')
 
-        config = {
+        # TODO use name as label if label is None
+
+        # common configuration
+        conf = {
             Key.COLOR: color,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
+            Key.DOWN_SAMPLE: down_sample,
+            Key.RANDOM_SEED: random_seed,
         }
+
         if samples:
             samples = list(samples)
             n_samples = len(samples)
-            config[Key.SAMPLES] = samples
+            conf[Key.SAMPLES] = samples
 
         else:
             df = self.join_sample_tables()
@@ -463,11 +502,40 @@ class PopulationAnalysis(object):
             n_samples = len(df_pop)
             if n_samples == 0:
                 raise ValueError('Query does not match any samples.')
-            config[Key.QUERY] = query
+            conf[Key.QUERY] = query
 
         self.log('Setting population {!r}; found {:,} samples.'
                  .format(name, n_samples))
-        self.config.set_population(name, config)
+        self.config.set_population(name, conf)
+
+    def get_population_samples(self, pop):
+        """TODO"""
+
+        # get population configuration
+        conf = self.config.get_population(pop)
+        query = conf.get(Key.QUERY, None)
+
+        # handle query
+        if query:
+            df = self.join_sample_tables()
+            df_pop = df.query(query)
+            samples = df_pop.index.values.tolist()
+
+        # handle explicit samples list
+        else:
+            samples = conf[Key.SAMPLES]
+
+        # handle down-sampling
+        down_sample = conf.get(Key.DOWN_SAMPLE, None)
+        if down_sample:
+            if down_sample > len(samples):
+                raise ValueError('Not enough samples in population {!r} ({}) to downsample to {}.'
+                                 .format(pop, len(samples), down_sample))
+            random_seed = conf.get(Key.RANDOM_SEED, None)
+            random.seed(random_seed)
+            samples = sorted(random.sample(samples, down_sample))
+
+        return samples
 
     def open_callset(self, callset=Key.MAIN):
         """TODO"""
@@ -475,37 +543,25 @@ class PopulationAnalysis(object):
         path = self.abs_path(config[Key.PATH])
         format = config[Key.FORMAT]
         if format == Format.HDF5:
-            root = h5py.File(path, mode='r')
+            callset_root = h5py.File(path, mode='r')
         elif format == Format.ZARR:
-            root = zarr.open_group(path, mode='r')
+            callset_root = zarr.open_group(path, mode='r')
         else:
             raise RuntimeError('Unexpected format: {!r}.'.format(format))
-        return root
+        return callset_root
 
     def get_callset_samples(self, callset=Key.MAIN):
         """TODO"""
         config = self.config.get_callset(callset)
         samples_path = config[Key.SAMPLES_PATH]
-        root = self.open_callset(callset)
+        callset_root = self.open_callset(callset)
         try:
-            samples = root[samples_path][:]
+            samples = callset_root[samples_path][:]
             if samples.dtype.kind == 'S':
                 samples = samples.astype('U')
             samples = samples.tolist()
         finally:
-            close_callset(root)
-        return samples
-
-    def get_population_samples(self, pop):
-        """TODO"""
-        config = self.config.get_population(pop)
-        query = config.get(Key.QUERY, None)
-        if query:
-            df = self.join_sample_tables()
-            df_pop = df.query(query)
-            samples = df_pop.index.values.tolist()
-        else:
-            samples = config[Key.SAMPLES]
+            close_callset(callset_root)
         return samples
 
     def locate_samples(self, callset=Key.MAIN, pop=None, downsample=None, seed=None):
@@ -542,7 +598,7 @@ class PopulationAnalysis(object):
         return samples, sample_indices
 
     def cache_save(self, cache_group, cache_key, params_doc, data, names=None):
-        # self.log('saving', cache_group, cache_key)
+        self.log('saving {}/{}'.format(cache_group, cache_key))
         cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
         group = cache.require_group(cache_group)
         if names is None:
@@ -566,34 +622,31 @@ class PopulationAnalysis(object):
         cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
         group = cache.require_group(cache_group)
         if cache_key not in group:
-            self.log('computing', cache_group, cache_key)
+            self.log('computing {}/{}'.format(cache_group, cache_key))
             raise CacheMiss
         result = group[cache_key]
         if '__params__' not in result.attrs:
-            self.log('computing', cache_group, cache_key)
+            self.log('computing {}/{}'.format(cache_group, cache_key))
             raise CacheMiss
-        self.log('loading', cache_group, cache_key)
+        self.log('loading {}/{}'.format(cache_group, cache_key))
         if names is None:
             return result[:]
         else:
             return tuple(result[n][:] for n in names)
 
-    def count_alleles(self, chrom, callset=Key.MAIN, pop=None, max_allele=3, dataset_name=None,
-                      downsample=None, seed=None):
+    def count_alleles(self, chrom, callset=Key.MAIN, pop=None):
         """TODO"""
 
         # determine which samples to include
-        samples, sample_indices = self.locate_samples(callset=callset, pop=pop,
-                                                      downsample=downsample, seed=seed)
+        samples, sample_indices = self.locate_samples(callset=callset, pop=pop)
 
         # setup parameters
+        callset_conf = self.config.get_callset(callset)
         params = dict(
             chrom=chrom,
             # N.B., include full callset config here in case it gets changed
-            callset=self.config.get_callset(callset),
+            callset=callset_conf,
             samples=samples,
-            max_allele=max_allele,
-            dataset_name=dataset_name,
         )
 
         # check cache
@@ -605,17 +658,19 @@ class PopulationAnalysis(object):
 
         except CacheMiss:
 
-            root = self.open_callset(callset)
+            genotype_dataset = callset_conf[Key.GENOTYPE_DATASET]
+            max_allele = callset_conf[Key.MAX_ALLELE]
+            callset_root = self.open_callset(callset)
 
             try:
                 # get genotype array
-                gt = get_genotype_array(root, chrom, dataset_name)
+                gt = allel.GenotypeDaskArray(callset_root[chrom]['calldata'][genotype_dataset])
 
                 # run computation
                 result = gt.count_alleles(max_allele=max_allele, subpop=sample_indices).compute()
 
             finally:
-                close_callset(root)
+                close_callset(callset_root)
 
             # save result
             self.cache_save(cache_group, cache_key, params_doc, result)
@@ -624,52 +679,185 @@ class PopulationAnalysis(object):
 
     # TODO __repr__
 
-    def windowed_diversity(self, chrom, window_size, window_start=None, window_stop=None,
-                           window_step=None, pop=None, callset=Key.MAIN, downsample=None,
-                           seed=None, max_allele=3, dataset_name=None, equally_accessible=True):
+    def load_variant_index(self, chrom, callset=Key.MAIN):
+        """TODO"""
+        callset_root = self.open_callset(callset)
+        try:
+            pos = callset_root[chrom]['variants']['POS'][:]
+            pos = allel.SortedIndex(pos)
+        finally:
+            close_callset(callset_root)
+        return pos
+
+    def windowed_diversity(self, chrom, window_size,
+                           # window_start=None, window_stop=None, window_step=None,
+                           pop=None, callset=Key.MAIN, equally_accessible=True):
         """TODO"""
 
         # determine which samples to include
-        samples, sample_indices = self.locate_samples(callset=callset, pop=pop,
-                                                      downsample=downsample, seed=seed)
+        samples, sample_indices = self.locate_samples(callset=callset, pop=pop)
 
         # setup parameters
         params = dict(
             chrom=chrom,
             window_size=window_size,
-            window_start=window_start,
-            window_stop=window_stop,
-            window_step=window_step,
+            # window_start=window_start,
+            # window_stop=window_stop,
+            # window_step=window_step,
             # N.B., include full callset config here in case it gets changed
             callset=self.config.get_callset(callset),
             samples=samples,
-            max_allele=max_allele,
-            dataset_name=dataset_name,
             equally_accessible=equally_accessible,
         )
 
         # check cache
         cache_group = inspect.currentframe().f_code.co_name
         params_doc, cache_key = hash_params(params)
+        result_names = 'windows', 'pi'
 
         try:
-            result = self.cache_load(cache_group, cache_key, names=['windows', 'pi'])
+
+            # load from cache
+            result = self.cache_load(cache_group, cache_key, names=result_names)
 
         except CacheMiss:
 
             # load allele counts
-            ac = self.count_alleles(chrom=chrom, callset=callset, pop=pop, downsample=downsample,
-                                    seed=seed, max_allele=max_allele, dataset_name=dataset_name)
+            ac = self.count_alleles(chrom=chrom, callset=callset, pop=pop)
 
-            # TODO load variant positions
+            # load variant positions
+            pos = self.load_variant_index(chrom=chrom, callset=callset)
 
-            # TODO setup windows
+            # load accessibility
+            is_accessible = self.load_genome_accessibility(chrom)
 
-            # TODO run windowed computation
+            # setup windows
+            # TODO add support for start, stop and step
+            if equally_accessible:
+                windows = allel.equally_accessible_windows(is_accessible=is_accessible,
+                                                           size=window_size)
 
-            # TODO save result
+            else:
+                chrom_size = len(self.genome_assembly[chrom])
+                windows = allel.stats.window.position_windows(pos, size=window_size, start=1,
+                                                              stop=chrom_size)
 
-        # TODO return result
+            # run windowed computation
+            pi, _, _, _ = allel.windowed_diversity(pos, ac, windows=windows,
+                                                   is_accessible=is_accessible)
+
+            # save result
+            result = windows, pi
+            self.cache_save(cache_group=cache_group, cache_key=cache_key, data=result,
+                            names=result_names, params_doc=params_doc)
+
+        return result
+
+    def windowed_diversity_distplot(self, chrom, window_size,
+                                    # window_start=None, window_stop=None, window_step=None,
+                                    pop=None, callset=Key.MAIN, equally_accessible=True,
+                                    ax=None, plot_kws=None, average=np.median, ci_kws=None):
+
+        # TODO multiple chroms
+
+        # load data
+        _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
+                                        callset=callset, equally_accessible=equally_accessible)
+        # plot as percent
+        pi = pi * 100
+
+        # main plot
+        import seaborn as sns
+        if plot_kws is None:
+            plot_kws = dict()
+        plot_kws.setdefault('ax', ax)
+        ax = sns.distplot(pi, **plot_kws)
+
+        # tidy up
+        ax.set_xlim(left=0)
+        ax.set_xlabel(r'Nucleotide diversity $\theta_{\pi}$ (%)')
+        ax.set_ylabel('Frequency (no. windows)')
+        pop_label = self.config.get_population(pop)[Key.LABEL]
+        n_samples = len(self.get_population_samples(pop))
+        ax.set_title('Population: {} (n={}); Chromosome: {}'
+                     .format(pop_label, n_samples, chrom))
+
+        # annotate average
+        if average is not None:
+            import scikits.bootstrap as bootstrap
+            if ci_kws is None:
+                ci_kws = dict()
+            ci_kws['statfunction'] = average
+            ci = bootstrap.ci(pi, **ci_kws)
+            m = average(pi)
+            ax.text(0.02, 0.98,
+                    '{}={:.3f}%\n95% CI [{:.3f}-{:.3f}]'
+                    .format(average.__name__, m, ci[0], ci[1]),
+                    ha='left', va='top', transform=ax.transAxes)
+
+        return ax
+
+    def windowed_diversity_violinplot(self, chrom, window_size, pops=None,
+                                      # window_start=None, window_stop=None, window_step=None,
+                                      callset=Key.MAIN, equally_accessible=True,
+                                      ax=None, plot_kws=None):
+        """TODO"""
+
+        # TODO multiple chroms
+
+        # load data
+        if isinstance(pops, str):
+            pops = [pops]
+        results = [
+            self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop, callset=callset,
+                                    equally_accessible=equally_accessible)
+            for pop in pops
+        ]
+        # plot as percent
+        data = [pi * 100 for windows, pi in results]
+
+        # main plot
+        import seaborn as sns
+        if plot_kws is None:
+            plot_kws = dict()
+        plot_kws.setdefault('ax', ax)
+        ax = sns.violinplot(data=data, **plot_kws)
+
+        # tidy up
+        pop_labels = [self.config.get_population(pop)[Key.LABEL] for pop in pops]
+        pop_labels = [pop if label is None else label for pop, label in zip(pops, pop_labels)]
+        pop_n_samples = [len(self.get_population_samples(pop)) for pop in pops]
+        pop_labels = ['{}\n(n={:,})'.format(label, n)
+                      for label, n in zip(pop_labels, pop_n_samples)]
+        ax.set_xticklabels(pop_labels)
+        ax.set_xlabel('Population')
+        ax.set_ylabel(r'Nucleotide diversity $\theta_{\pi}$ (%)')
+        ax.set_ylim(bottom=0)
+        ax.set_title('Chromosome: {}'.format(chrom))
+
+        return ax
+
+    def windowed_diversity_average_ci(self, chrom, window_size, pop=None,
+                                      # window_start=None, window_stop=None, window_step=None,
+                                      callset=Key.MAIN, equally_accessible=True,
+                                      average=np.median, ci_kws=None):
+        """TODO"""
+
+        # TODO multiple chroms
+
+        # load data
+        _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
+                                        callset=callset, equally_accessible=equally_accessible)
+
+        # compute CI
+        import scikits.bootstrap as bootstrap
+        if ci_kws is None:
+            ci_kws = dict()
+        ci_kws['statfunction'] = average
+        ci = bootstrap.ci(pi, **ci_kws)
+        m = average(pi)
+
+        return m, list(ci)
 
 
 class CacheMiss(Exception):

@@ -48,8 +48,11 @@ class Logger(object):
             if isinstance(self.logfile, str):
                 with open(self.logfile, mode='a') as f:
                     print(*args, file=f)
+                    f.flush()
             else:
                 print(*args, file=self.logfile)
+                if hasattr(self.logfile, 'flush'):
+                    self.logfile.flush()
 
 
 def guess_callset_format(path):
@@ -88,27 +91,3 @@ def hash_params(params):
     s = yaml.dump(params, default_flow_style=False)
     k = hashlib.md5(s.encode('ascii')).hexdigest()
     return s, k
-
-
-def get_genotype_array(callset, chrom, dataset_name):
-
-    gt = None
-
-    # specified dataset name
-    if dataset_name:
-        gt_path = '/'.join([chrom, 'calldata', dataset_name])
-        if gt_path in callset:
-            gt = callset[gt_path]
-
-    # guess dataset name
-    else:
-        for dataset_name in 'genotype', 'GT':
-            gt_path = '/'.join([chrom, 'calldata', dataset_name])
-            if gt_path in callset:
-                gt = callset[gt_path]
-                break
-
-    if gt is None:
-        raise RuntimeError('Could not find genotype dataset for chromosome {!r}.'.format(chrom))
-
-    return allel.GenotypeDaskArray(gt)

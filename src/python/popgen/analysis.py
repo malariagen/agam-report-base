@@ -4,7 +4,9 @@
 # standard library imports
 import os
 import sys
-from typing import Mapping
+from typing import Mapping, List
+import random
+import inspect
 
 
 # third party imports
@@ -18,7 +20,8 @@ import zarr
 
 # internal imports
 from .config import YAMLConfigFile
-from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset
+from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset, \
+    hash_params
 
 
 class PopulationAnalysis(object):
@@ -59,7 +62,7 @@ class PopulationAnalysis(object):
 
     def set_genome_assembly(self,
                             path: str,
-                            title: str=None,
+                            label: str=None,
                             description: str=None,
                             format: str='fasta'):
         """Set the reference genome assembly.
@@ -69,7 +72,7 @@ class PopulationAnalysis(object):
         path
             Path to assembly file. If given as a relative path, must be relative to the analysis
             directory.
-        title
+        label
             Name of the assembly.
         description
             Description of the assembly.
@@ -99,14 +102,16 @@ class PopulationAnalysis(object):
         # report some diagnostics
         n_chroms = len(assembly)
         n_bases = sum(len(assembly[chrom]) for chrom in assembly)
-        self.log('Setting genome assembly; found {0} sequences, total size {1:,} bp.'
+        self.log('Setting genome assembly; found {0} chromosomes, total size {1:,} bp.'
                  .format(n_chroms, n_bases))
 
         # store configuration
         config = dict(
-            path=path, title=title, description=description, format=format
+            path=path, label=label, description=description, format=format
         )
         self.config.set_genome_assembly(config)
+
+        # TODO need to revalidate callsets, accessibility, ..., if change genome assembly?
 
     @property
     def genome_assembly(self) -> pyfasta.Fasta:
@@ -122,7 +127,7 @@ class PopulationAnalysis(object):
 
     def set_genome_annotation(self,
                               path: str,
-                              title: str=None,
+                              label: str=None,
                               description: str=None,
                               format: str='gff3'):
         """TODO"""
@@ -153,7 +158,7 @@ class PopulationAnalysis(object):
 
         # store configuration
         config = dict(
-            path=path, title=title, description=description, format=format
+            path=path, label=label, description=description, format=format
         )
         self.config.set_genome_annotation(config)
 
@@ -175,7 +180,7 @@ class PopulationAnalysis(object):
                                  path: str,
                                  format: str='hdf5',
                                  dataset_name: str='is_accessible',
-                                 title: str=None,
+                                 label: str=None,
                                  description: str=None):
         """TODO"""
 
@@ -197,19 +202,24 @@ class PopulationAnalysis(object):
         try:
 
             # check file validity
-            n_bases_total = 0
-            n_bases_total_accessible = 0
+            n_chroms = 0
+            n_bases_accessible = 0
 
             for chrom in sorted(self.genome_assembly):
-                dataset_path = '/'.join([chrom, dataset_name])
+
+                if chrom in accessibility:
+                    group = accessibility[chrom]
+                    n_chroms += 1
+                else:
+                    continue
 
                 # check dataset exists
-                if dataset_path not in accessibility:
+                if dataset_name not in group:
                     raise ValueError('Could not find accessibility dataset for chromosome '
                                      '{!r}.'.format(chrom))
 
                 # check dataset type and shape
-                is_accessible = accessibility[dataset_path]
+                is_accessible = group[dataset_name]
                 if is_accessible.dtype != bool:
                     raise ValueError('Expected bool dtype, found {!r}'
                                      .format(is_accessible.dtype))
@@ -221,21 +231,21 @@ class PopulationAnalysis(object):
                     raise ValueError('Expected dataset with length {}, found {}.'
                                      .format(n_bases, is_accessible.shape[0]))
 
-                n_bases_total += n_bases
-                n_bases_total_accessible += np.count_nonzero(is_accessible[:])
+                n_bases_accessible += np.count_nonzero(is_accessible[:])
+
+            if n_chroms == 0:
+                raise ValueError('No chromosome groups found in accessibility data.')
 
         finally:
             accessibility.close()
 
         # log some diagnostics
-        pc_genome_accessible = n_bases_total_accessible * 100 / n_bases_total
-        self.log('Setting genome accessibility; found {:,} accessible bases '
-                 '({:.1f}% of genome).'
-                 .format(n_bases_total_accessible, pc_genome_accessible))
+        self.log('Setting genome accessibility; found {:,} chromosomes, {:,} accessible bp.'
+                 .format(n_chroms, n_bases_accessible))
 
         # store configuration
         config = dict(
-            path=path, format=format, dataset_name=dataset_name, title=title,
+            path=path, format=format, dataset_name=dataset_name, label=label,
             description=description
         )
         self.config.set_genome_accessibility(config)
@@ -254,7 +264,7 @@ class PopulationAnalysis(object):
                          name: str='main',
                          format: str='csv',
                          read_kws: dict=None,
-                         title: str=None,
+                         label: str=None,
                          description: str=None):
         """TODO"""
 
@@ -285,7 +295,7 @@ class PopulationAnalysis(object):
 
         # store configuration
         config = dict(
-            path=path, format=format, read_kws=read_kws, title=title, description=description
+            path=path, format=format, read_kws=read_kws, label=label, description=description
         )
         self.config.set_sample_table(name, config)
 
@@ -328,7 +338,7 @@ class PopulationAnalysis(object):
 
         return df
 
-    def set_callset(self, path, format=None, name='main', phased=False, title=None,
+    def set_callset(self, path, format=None, name='main', phased=False, label=None,
                     description=None):
         """TODO"""
 
@@ -340,6 +350,7 @@ class PopulationAnalysis(object):
             format = format.lower()
             if format not in {'hdf5', 'zarr'}:
                 raise NotImplementedError("Format %r not currently supported." % format)
+        # TODO auto extract vcf
 
         # check valid callset
         try:
@@ -392,6 +403,133 @@ class PopulationAnalysis(object):
 
         # store configuration
         config = dict(
-            path=path, format=format, phased=phased, title=title, description=description
+            path=path, format=format, phased=phased, label=label, description=description
         )
         self.config.set_callset(name, config)
+
+    def set_population(self,
+                       name: str,
+                       query: str=None,
+                       samples: List[str]=None,
+                       color=None,
+                       label: str=None,
+                       description: str=None):
+        """TODO"""
+
+        if query and samples:
+            raise ValueError('Please provide either a query or a list of samples, not both.')
+
+        config = dict(color=color, label=label, description=description)
+        if samples:
+            samples = list(samples)
+            n_samples = len(samples)
+            config['samples'] = samples
+
+        else:
+            df = self.join_sample_tables()
+            df_pop = df.query(query)
+            n_samples = len(df_pop)
+            if n_samples == 0:
+                raise ValueError('Query does not match any samples.')
+            config['query'] = query
+
+        self.log('Setting population {!r}; found {:,} samples.'
+                 .format(name, n_samples))
+        self.config.set_population(name, config)
+
+    def get_callset_samples(self, callset='main'):
+        # TODO
+        pass
+
+    def get_population_samples(self, pop):
+        # TODO
+        pass
+
+    def locate_samples(self, callset='main', pop=None, downsample=None, seed=None):
+
+        callset_samples = self.get_callset_samples(callset)
+        if pop:
+            samples = self.get_population_samples(pop)
+        else:
+            samples = callset_samples
+
+        # deal with downsampling
+        if downsample:
+            if downsample > len(samples):
+                raise ValueError('Not enough samples ({}) to downsample to {}.'
+                                 .format(len(samples), downsample))
+            random.seed(seed)
+            samples = sorted(random.sample(samples, downsample))
+
+        # find sample indices
+        if samples == callset_samples:
+            # no selection, use None to indicate all samples
+            samples = None
+            sample_indices = None
+
+        else:
+            sample_indices = list()
+            for s in samples:
+                if s not in callset_samples:
+                    raise ValueError('Sample {!r} not found in callset {!r}'
+                                     .format(s, callset))
+                sample_indices.append(callset_samples.index(s))
+
+        return samples, sample_indices
+
+    def cache_save(self, group, key, result, names=None):
+        # TODO
+        pass
+
+    def cache_load(self, group, key, names=None):
+        # TODO
+        pass
+
+    def count_alleles(self, chrom, callset='main', pop=None, max_allele=3, dataset_name=None,
+                      downsample=None, seed=None):
+        """TODO"""
+
+        # determine which samples to include
+        samples, sample_indices = self.locate_samples(callset=callset, pop=pop,
+                                                      downsample=downsample, seed=seed)
+
+        # setup parameters
+        params = dict(
+            chrom=chrom,
+            # N.B., include full callset config here in case it gets changed
+            callset=self.config.get_callset(callset),
+            samples=samples,
+            max_allele=max_allele,
+            dataset_name=dataset_name,
+        )
+
+        # check cache
+        cache_group = inspect.currentframe().f_code.co_name
+        cache_key = hash_params(params)
+
+        try:
+            result = self.cache_load(cache_group, cache_key)
+
+        except CacheMiss:
+            self.log('computing', cache_group, cache_key)
+
+            root = self.open_callset(callset)
+
+            try:
+                # get genotype array
+                gt = get_genotype_array(root, chrom, dataset_name)
+
+                # run computation
+                result = gt.count_alleles(max_allele=max_allele, subpop=sample_indices).compute()
+
+            finally:
+                close_callset(root)
+
+            # save result
+            self.cache_save(cache_group, cache_key, result)
+
+        return allel.AlleleCountsArray(result)
+
+
+class CacheMiss(Exception):
+    pass

@@ -3,6 +3,8 @@ import os
 import pandas
 import h5py
 import zarr
+import yaml
+import hashlib
 
 
 def check_path_exists(path):
@@ -79,3 +81,14 @@ def open_callset(path, format, mode='r'):
 def close_callset(callset):
     if hasattr(callset, 'close'):
         callset.close()
+
+
+def hash_params(params):
+    s = yaml.dump(params)
+    k = hashlib.md5(s.encode('ascii')).hexdigest()
+    return k
+
+
+def get_genotype_array(callset, chrom, dataset_name):
+    # TODO
+    pass

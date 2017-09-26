@@ -1,16 +1,15 @@
-anhima == 0.11.2
-prettypandas == 0.0.3
-#py-cpuinfo == 0.2.3
-#scikits.bootstrap == 0.3.2
-#vcfnp == 2.3.0
-xlwt-future == 0.8.0
-hmmlearn == 0.2.0
-# jupyter
-notebook==5.0.0
-qtconsole==4.3.0
-jupyter_console==5.1.0
-nbconvert==5.1.1
-ipykernel==4.6.1
-ipywidgets==6.0.0
-jupyterlab==0.24.1
-graphviz==0.7.1
+# not on conda-forge
+anhima==0.11.2
+# not on conda-forge
+prettypandas==0.0.3
+# not on conda-forge
+xlwt-future==0.8.0
+# not on conda-forge
+hmmlearn==0.2.0
+# version not on conda-forge
+graphviz==0.8
+# not build for Python 3.6 on conda-forge
+petl==1.1.1
+petlx==1.0.3
+# not on conda-forge
+scikits.bootstrap==0.3.3

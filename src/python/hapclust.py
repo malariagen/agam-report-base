@@ -425,6 +425,40 @@ def _graph_edges(graph,
                     graph.edge(edge_from, edge_to, **kwargs)
 
 
+import sys
+
+
+class DummyLogger(object):
+
+    def __call__(self, *args, **kwargs):
+        pass
+
+
+class DebugLogger(object):
+
+    def __init__(self, name, out=None):
+        self.name = name
+        if out is None:
+            out = sys.stdout
+        elif isinstance(out, str):
+            out = open(out, mode='at')
+        self.out = out
+
+    def __call__(self, *msg):
+        print(self.name, *msg, file=self.out)
+        self.out.flush()
+
+
+def _pairwise_haplotype_distance(h, metric='hamming'):
+    assert metric in ['hamming', 'jaccard']
+    dist = allel.pairwise_distance(h, metric=metric)
+    dist *= h.n_variants
+    dist = scipy.spatial.distance.squareform(dist)
+    # N.B., np.rint is **essential** here, otherwise can get weird rounding errors
+    dist = np.rint(dist).astype('i8')
+    return dist
+
+
 def graph_haplotype_network(h,
                             hap_colors='grey',
                             distance_metric='hamming',
@@ -453,11 +487,18 @@ def graph_haplotype_network(h,
                             max_dist=5,
                             variant_labels=None,
                             debug=False,
+                            debug_out=None,
                             ):
     """TODO doc me"""
 
+    if debug:
+        log = DebugLogger('[graph_haplotype_network]', out=debug_out)
+    else:
+        log = DummyLogger()
+
     # check inputs
     h = allel.HaplotypeArray(h)
+    log(h.shape)
 
     # optimise - keep only segregating variants
     ac = h.count_alleles()
@@ -468,13 +509,16 @@ def graph_haplotype_network(h,
 
     # find distinct haplotypes
     h_distinct_sets = h.distinct()
+    # log('h_distinct_sets', h_distinct_sets)
 
     # find indices of distinct haplotypes - just need one per set
     h_distinct_indices = [sorted(s)[0] for s in h_distinct_sets]
+    log('h_distinct_indices', h_distinct_indices)
 
     # reorder by index
     ix = np.argsort(h_distinct_indices)
     h_distinct_indices = [h_distinct_indices[i] for i in ix]
+    log('h_distinct_indices (reordered)', h_distinct_indices)
     h_distinct_sets = [h_distinct_sets[i] for i in ix]
 
     # obtain an array of distinct haplotypes
@@ -493,10 +537,7 @@ def graph_haplotype_network(h,
     hap_counts = [len(s) for s in h_distinct_sets]
 
     # compute pairwise distance matrix
-    assert distance_metric in ['hamming', 'jaccard']
-    dist = allel.pairwise_distance(h_distinct, metric=distance_metric)
-    dist *= h.n_variants
-    dist = scipy.spatial.distance.squareform(dist).astype(int)
+    dist = _pairwise_haplotype_distance(h_distinct, distance_metric)
 
     if network_method.lower() == 'mst':
 
@@ -513,7 +554,8 @@ def graph_haplotype_network(h,
     elif network_method.lower() == 'msn':
 
         # compute network
-        edges, alternate_edges = minimum_spanning_network(dist, max_dist=max_dist, debug=debug)
+        edges, alternate_edges = minimum_spanning_network(dist, max_dist=max_dist, debug=debug,
+                                                          debug_out=debug_out)
         edges = np.triu(edges)
         alternate_edges = np.triu(alternate_edges)
 
@@ -650,15 +692,20 @@ def graph_haplotype_network(h,
                      h_distinct,
                      variant_labels)
 
-    return graph
+    return graph, hap_counts
 
 
-def minimum_spanning_network(dist, max_dist=None, debug=False):
+def minimum_spanning_network(dist, max_dist=None, debug=False, debug_out=None):
     """TODO"""
+
+    if debug:
+        log = DebugLogger('[minimum_spanning_network]', out=debug_out)
+    else:
+        log = DummyLogger()
 
     # TODO review implementation, see if this can be tidied up
 
-    # keep only the lower triangle of the distance matrix, to avoid adding the same
+    # keep only the upper triangle of the distance matrix, to avoid adding the same
     # edge twice
     dist = np.triu(dist)
 
@@ -674,10 +721,11 @@ def minimum_spanning_network(dist, max_dist=None, debug=False):
 
     # start with haplotypes separated by a single mutation
     step = 1
+    log('[%s]' % step, 'begin')
 
     # iterate until all haplotypes in a single cluster, or max_dist reached
     while len(set(cluster)) > 1 and (max_dist is None or step <= max_dist):
-        if debug: print('processing step', step, cluster)
+        log('[%s]' % step, 'processing, cluster:', cluster)
 
         # keep track of which clusters have been merged at this height
         merged = set()
@@ -687,7 +735,7 @@ def minimum_spanning_network(dist, max_dist=None, debug=False):
 
         # iterate over all pairs where distance equals current step size
         for i, j in zip(*np.nonzero(dist == step)):
-            if debug: print('found potential edge', i, j)
+            log('[%s]' % step, 'found potential edge', i, j)
 
             # current cluster assignment for each haplotype
             a = cluster[i]
@@ -697,14 +745,14 @@ def minimum_spanning_network(dist, max_dist=None, debug=False):
             pa = prv_cluster[i]
             pb = prv_cluster[j]
 
-            if debug: print(a, b, pa, pb, merged)
+            log('[%s]' % step, a, b, pa, pb, merged)
 
             # check to see if both nodes already in the same cluster
             if a != b:
 
                 # nodes are in different clusters, so we can merge (i.e., connect) the clusters
 
-                if debug: print('assign an edge')
+                log('[%s]' % step, 'assign an edge')
                 edges[i, j] = dist[i, j]
                 edges[j, i] = dist[i, j]
 
@@ -715,36 +763,38 @@ def minimum_spanning_network(dist, max_dist=None, debug=False):
                 cluster[loc_a] = c
                 cluster[loc_b] = c
                 merged.add(tuple(sorted([pa, pb])))
-                if debug: print('merged', cluster, merged)
+                log('[%s]' % step, 'merged', cluster, merged)
 
             elif tuple(sorted([pa, pb])) in merged or step == 1:
 
-                # the two clusters have already been merged at this level, this is an alternate connection
-                # N.B., special case step = 1 because no previous cluster assignments
+                # the two clusters have already been merged at this level, this is an alternate
+                # connection
+                # N.B., special case step = 1 because no previous cluster assignments (TODO really?)
 
-                if debug: print('assign an alternate edge')
+                log('[%s]' % step, 'assign an alternate edge')
                 alternate_edges[i, j] = dist[i, j]
                 alternate_edges[j, i] = dist[i, j]
 
             else:
 
-                if debug: print('')
+                log('[%s]' % step, 'WTF?')
 
         # increment step
         step += 1
 
+    log('# edges:', np.count_nonzero(np.triu(edges)))
+    log('# alt edges:', np.count_nonzero(np.triu(alternate_edges)))
     return edges, alternate_edges
 
 
-def _remove_obsolete(h, orig_n_haplotypes, max_dist=None, debug=False):
+def _remove_obsolete(h, orig_n_haplotypes, max_dist, log):
     n_removed = None
+    edges = alt_edges = None
 
     while n_removed is None or n_removed > 0:
 
         # step 1 - compute distance
-        dist = allel.pairwise_distance(h, metric='hamming')
-        dist *= h.n_variants
-        dist = scipy.spatial.distance.squareform(dist).astype(int)
+        dist = _pairwise_haplotype_distance(h, metric='hamming')
 
         # step 2 - construct the minimum spanning network
         edges, alt_edges = minimum_spanning_network(dist, max_dist=max_dist)
@@ -757,13 +807,20 @@ def _remove_obsolete(h, orig_n_haplotypes, max_dist=None, debug=False):
             if n_connections <= 2:
                 loc_keep[i] = False
         n_removed = np.count_nonzero(~loc_keep)
-        if debug: print('discarding', n_removed, 'obsolete haplotypes')
+        log('discarding', n_removed, 'obsolete haplotypes')
         h = h[:, loc_keep]
 
     return h, edges, alt_edges
 
 
-def median_joining_network(h, debug=False, max_dist=None):
+def median_joining_network(h, max_dist=None, debug=False, debug_out=None):
+    """TODO doc me"""
+
+    if debug:
+        log = DebugLogger('[median_joining_network]', out=debug_out)
+    else:
+        log = DummyLogger()
+
     h = allel.HaplotypeArray(h, dtype='i1')
     orig_n_haplotypes = h.n_haplotypes
 
@@ -772,7 +829,7 @@ def median_joining_network(h, debug=False, max_dist=None):
     while n_medians_added is None or n_medians_added > 0:
 
         # steps 1-3
-        h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist, debug=debug)
+        h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist, log=log)
         all_edges = edges + alt_edges
 
         # step 4 - add median vectors
@@ -786,30 +843,30 @@ def median_joining_network(h, debug=False, max_dist=None):
                 if all_edges[i, j]:
                     for k in range(n):
                         if all_edges[i, k] or all_edges[j, k]:
-                            if debug: print(iteration, i, j, k, 'computing median vector')
+                            log(iteration, i, j, k, 'computing median vector')
                             uvw = h[:, [i, j, k]]
                             ac = uvw.count_alleles(max_allele=1)
                             # majority consensus haplotype
                             x = np.argmax(ac, axis=1).astype('i1')
                             x_hash = hash(x.tobytes())
-                            if debug: print(iteration, i, j, k, 'median vector', x)
+                            log(iteration, i, j, k, 'median vector', x)
                             # test if x already in haps
                             if x_hash in seen:
-                                if debug: print(iteration, i, j, k, 'median vector already present')
+                                log(iteration, i, j, k, 'median vector already present')
                                 pass
                             else:
-                                if debug: print(iteration, i, j, k, 'adding median vector')
+                                log(iteration, i, j, k, 'adding median vector')
                                 new_haps.append(x.tolist())
                                 seen.add(x_hash)
         n_medians_added = len(new_haps)
-        if debug: print(new_haps)
+        log(new_haps)
         if n_medians_added:
             h = h.concatenate(allel.HaplotypeArray(np.array(new_haps, dtype='i1').T), axis=1)
 
         iteration += 1
 
     # final pass
-    h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist, debug=debug)
+    h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist, log=log)
     return h, edges, alt_edges
 
 
@@ -827,7 +884,11 @@ def locate_recombinants(h, debug=False):
         new_solutions = []
         for least_frequent_gamete in zip(*np.nonzero(count[i, j] == min_count)):
             # find indices of haplotypes of the least frequent gametic type
-            recombinant_haps_idx = set(np.nonzero(np.all(h[[i, j], :] == np.array(least_frequent_gamete)[:, np.newaxis], axis=0))[0])
+            recombinant_haps_idx = set(
+                np.nonzero(
+                    np.all(h[[i, j], :] == np.array(least_frequent_gamete)[:, np.newaxis], axis=0)
+                )[0]
+            )
             if debug:
                 print(i, j, count[i, j].flatten(), least_frequent_gamete, recombinant_haps_idx)
             new_solutions.extend([s.union(recombinant_haps_idx) for s in solutions])

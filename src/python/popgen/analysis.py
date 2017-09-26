@@ -18,7 +18,7 @@ import zarr
 
 
 # internal imports
-from .config import YAMLConfigFile, Key, Format
+from .config import YAMLConfigFile, Key, Format, Section
 from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset, \
     hash_params
 
@@ -74,7 +74,7 @@ class PopulationAnalysis(object):
             Path to assembly file. If given as a relative path, must be relative to the analysis
             directory.
         label: str
-            Name of the assembly.
+            Human-readable label.
         description: str
             Description of the assembly.
         format: str
@@ -598,16 +598,20 @@ class PopulationAnalysis(object):
         return samples, sample_indices
 
     def cache_save(self, cache_group, cache_key, params_doc, data, names=None):
-        self.log('saving {}/{}'.format(cache_group, cache_key))
+        # self.log('saving {}/{}'.format(cache_group, cache_key))
         cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
         group = cache.require_group(cache_group)
+
         if names is None:
+            # result is single array result
             if cache_key in group:
                 del group[cache_key]
             result = group.create_dataset(cache_key, dtype=data.dtype, shape=data.shape,
                                           compressor=self.cache_compressor)
             result[:] = data
+
         else:
+            # result is tuple of arrays
             if cache_key in group:
                 del group[cache_key]
             result = group.create_group(cache_key)
@@ -615,20 +619,27 @@ class PopulationAnalysis(object):
                 ds = result.create_dataset(n, dtype=d.dtype, shape=d.shape,
                                            compressor=self.cache_compressor)
                 ds[:] = d
+
         # mark success
         result.attrs['__params__'] = params_doc
 
     def cache_load(self, cache_group, cache_key, names=None):
         cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
         group = cache.require_group(cache_group)
-        if cache_key not in group:
+
+        # look for result in cache
+        try:
+            if cache_key not in group:
+                raise CacheMiss
+            result = group[cache_key]
+            if '__params__' not in result.attrs:
+                # incomplete save
+                raise CacheMiss
+        except CacheMiss:
             self.log('computing {}/{}'.format(cache_group, cache_key))
-            raise CacheMiss
-        result = group[cache_key]
-        if '__params__' not in result.attrs:
-            self.log('computing {}/{}'.format(cache_group, cache_key))
-            raise CacheMiss
-        self.log('loading {}/{}'.format(cache_group, cache_key))
+            raise
+
+        # self.log('loading {}/{}'.format(cache_group, cache_key))
         if names is None:
             return result[:]
         else:
@@ -691,8 +702,17 @@ class PopulationAnalysis(object):
 
     def windowed_diversity(self, chrom, window_size,
                            # window_start=None, window_stop=None, window_step=None,
-                           pop=None, callset=Key.MAIN, equally_accessible=True):
+                           pop=None, callset=Key.MAIN, eqaccess=True):
         """TODO"""
+
+        # handle multiple chromosomes
+        if isinstance(chrom, (list, tuple)):
+            results = [self.windowed_diversity(chrom=c, window_size=window_size, pop=pop,
+                                               callset=callset, eqaccess=eqaccess)
+                       for c in chrom]
+            windows = np.concatenate([result[0] for result in results])
+            pi = np.concatenate([result[1] for result in results])
+            return windows, pi
 
         # determine which samples to include
         samples, sample_indices = self.locate_samples(callset=callset, pop=pop)
@@ -707,7 +727,7 @@ class PopulationAnalysis(object):
             # N.B., include full callset config here in case it gets changed
             callset=self.config.get_callset(callset),
             samples=samples,
-            equally_accessible=equally_accessible,
+            eqaccess=eqaccess,
         )
 
         # check cache
@@ -733,7 +753,7 @@ class PopulationAnalysis(object):
 
             # setup windows
             # TODO add support for start, stop and step
-            if equally_accessible:
+            if eqaccess:
                 windows = allel.equally_accessible_windows(is_accessible=is_accessible,
                                                            size=window_size)
 
@@ -755,14 +775,18 @@ class PopulationAnalysis(object):
 
     def windowed_diversity_distplot(self, chrom, window_size,
                                     # window_start=None, window_stop=None, window_step=None,
-                                    pop=None, callset=Key.MAIN, equally_accessible=True,
-                                    ax=None, plot_kws=None, average=np.median, ci_kws=None):
-
-        # TODO multiple chroms
+                                    pop=None, callset=Key.MAIN, eqaccess=True,
+                                    ax=None, plot_kws=None, average=np.median, ci_kws=None,
+                                    xlim=None):
 
         # load data
         _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                        callset=callset, equally_accessible=equally_accessible)
+                                        callset=callset, eqaccess=eqaccess)
+        if isinstance(chrom, (list, tuple)):
+            chrom_label = 'Chromosomes: ' + ', '.join(chrom)
+        else:
+            chrom_label = 'Chromosome: ' + chrom
+
         # plot as percent
         pi = pi * 100
 
@@ -775,12 +799,13 @@ class PopulationAnalysis(object):
 
         # tidy up
         ax.set_xlim(left=0)
-        ax.set_xlabel(r'Nucleotide diversity $\theta_{\pi}$ (%)')
-        ax.set_ylabel('Frequency (no. windows)')
-        pop_label = self.config.get_population(pop)[Key.LABEL]
-        n_samples = len(self.get_population_samples(pop))
-        ax.set_title('Population: {} (n={}); Chromosome: {}'
-                     .format(pop_label, n_samples, chrom))
+        ax.set_xlabel(r'$\theta_{\pi}$ (%)')
+        ax.set_ylabel('Frequency')
+        pop_label = self.get_population_label(pop)
+        ax.set_title('Population: {}; {}'
+                     .format(pop_label, chrom_label))
+        if xlim:
+            ax.set_xlim(*xlim)
 
         # annotate average
         if average is not None:
@@ -795,59 +820,66 @@ class PopulationAnalysis(object):
                     .format(average.__name__, m, ci[0], ci[1]),
                     ha='left', va='top', transform=ax.transAxes)
 
-        return ax
+    def get_population_label(self, pop):
+        """TODO"""
+        label = self.config.get_population(pop)[Key.LABEL]
+        if label is None:
+            label = pop
+        n_samples = len(self.get_population_samples(pop))
+        label += ' (n={})'.format(n_samples)
+        return label
 
     def windowed_diversity_violinplot(self, chrom, window_size, pops=None,
                                       # window_start=None, window_stop=None, window_step=None,
-                                      callset=Key.MAIN, equally_accessible=True,
-                                      ax=None, plot_kws=None):
+                                      callset=Key.MAIN, eqaccess=True,
+                                      ax=None, plot_kws=None, ylim=None):
         """TODO"""
-
-        # TODO multiple chroms
 
         # load data
         if isinstance(pops, str):
             pops = [pops]
         results = [
             self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop, callset=callset,
-                                    equally_accessible=equally_accessible)
+                                    eqaccess=eqaccess)
             for pop in pops
         ]
+
         # plot as percent
-        data = [pi * 100 for windows, pi in results]
+        data = [pi * 100 for _, pi in results]
+
+        # handle multiple chroms
+        if isinstance(chrom, (list, tuple)):
+            chrom_label = 'Chromosomes: ' + ', '.join(chrom)
+        else:
+            chrom_label = 'Chromosome: ' + chrom
 
         # main plot
         import seaborn as sns
         if plot_kws is None:
             plot_kws = dict()
-        plot_kws.setdefault('ax', ax)
+        plot_kws['ax'] = ax
         ax = sns.violinplot(data=data, **plot_kws)
 
         # tidy up
-        pop_labels = [self.config.get_population(pop)[Key.LABEL] for pop in pops]
-        pop_labels = [pop if label is None else label for pop, label in zip(pops, pop_labels)]
-        pop_n_samples = [len(self.get_population_samples(pop)) for pop in pops]
-        pop_labels = ['{}\n(n={:,})'.format(label, n)
-                      for label, n in zip(pop_labels, pop_n_samples)]
+        pop_labels = [self.get_population_label(pop) for pop in pops]
         ax.set_xticklabels(pop_labels)
         ax.set_xlabel('Population')
-        ax.set_ylabel(r'Nucleotide diversity $\theta_{\pi}$ (%)')
-        ax.set_ylim(bottom=0)
-        ax.set_title('Chromosome: {}'.format(chrom))
-
-        return ax
+        ax.set_ylabel(r'$\theta_{\pi}$ (%)')
+        if ylim:
+            ax.set_ylim(*ylim)
+        else:
+            ax.set_ylim(bottom=0)
+        ax.set_title(chrom_label)
 
     def windowed_diversity_average_ci(self, chrom, window_size, pop=None,
                                       # window_start=None, window_stop=None, window_step=None,
-                                      callset=Key.MAIN, equally_accessible=True,
+                                      callset=Key.MAIN, eqaccess=True,
                                       average=np.median, ci_kws=None):
         """TODO"""
 
-        # TODO multiple chroms
-
         # load data
         _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                        callset=callset, equally_accessible=equally_accessible)
+                                        callset=callset, eqaccess=eqaccess)
 
         # compute CI
         import scikits.bootstrap as bootstrap
@@ -858,6 +890,233 @@ class PopulationAnalysis(object):
         m = average(pi)
 
         return m, list(ci)
+
+    def windowed_diversity_compare(self, chrom, window_size, pops,
+                                   # window_start=None, window_stop=None, window_step=None,
+                                   callset=Key.MAIN, eqaccess=True,
+                                   average=np.median, ci_kws=None):
+
+        # load data
+        results = {pop: self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
+                                                callset=callset,
+                                                eqaccess=eqaccess)
+                   for pop in pops}
+
+        # setup printing
+        pop_labels = [self.get_population_label(pop) for pop in pops]
+        label_len = max(len(l) for l in pop_labels)
+
+        # handle multiple chroms
+        if isinstance(chrom, (list, tuple)):
+            chrom_label = 'chromosomes ' + ', '.join(chrom)
+        else:
+            chrom_label = 'Chromosome ' + chrom
+
+        title = 'Nucleotide diversity; {}\n'.format(chrom_label)
+        title += '-' * (len(title) - 1)
+        self.log(title)
+
+        # compute averages and CIs
+        import scikits.bootstrap as bootstrap
+        if ci_kws is None:
+            ci_kws = dict()
+        ci_kws['statfunction'] = average
+        for pop in pops:
+            # compute as percent
+            result = results[pop]
+            pi = result[1] * 100
+            ci = bootstrap.ci(pi, **ci_kws)
+            m = average(pi)
+            label = self.get_population_label(pop)
+            self.log('{} : {}={:.3f}%; 95% CI [{:.3f}-{:.3f}]'
+                     .format(label.ljust(label_len), average.__name__, m, ci[0], ci[1]))
+
+        # compare pairwise
+        import itertools
+        import scipy.stats
+        for pop1, pop2 in itertools.combinations(pops, 2):
+            pi1 = results[pop1][1]
+            pi2 = results[pop2][1]
+            lbl1 = self.get_population_label(pop1)
+            lbl2 = self.get_population_label(pop2)
+            t, p = scipy.stats.wilcoxon(pi1, pi2)
+            p_fmt = '{:.2e}' if p < 1e-3 else '{:.3f}'
+            p_str = p_fmt.format(p)
+            self.log('{} versus {} : Wilcoxon signed rank test P={}; statistic={:.1f}'
+                     .format(lbl1, lbl2, p_str, t))
+
+    def windowed_diversity_chromplot(self, chrom, window_size, pop=None,
+                                     callset=Key.MAIN, eqaccess=True,
+                                     ax=None, plot_kws=None, legend=True, legend_kws=None):
+
+        # load data
+        windows, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
+                                              callset=callset,
+                                              eqaccess=eqaccess)
+        # plot as percent
+        pi = pi * 100
+
+        # main plot
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        if plot_kws is None:
+            plot_kws = dict()
+        plot_kws.setdefault('linewidth', 1)
+        pop_label = self.get_population_label(pop)
+        plot_kws.setdefault('label', pop_label)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 2))
+        x = windows.mean(axis=1)
+        ax.plot(x, pi, **plot_kws)
+
+        # tidy
+        chrom_size = len(self.genome_assembly[chrom])
+        ax.set_xlim(0, chrom_size)
+        ax.set_ylim(bottom=0)
+        ax.set_ylabel(r'$\theta_{\pi}$ (%)')
+        xticks = ax.get_xticks()
+        if chrom_size > 1e6:
+            xticklabels = xticks / 1e6
+            units = 'Mbp'
+        elif chrom_size > 1e5:
+            xticklabels = xticks / 1e5
+            units = 'kbp'
+        else:
+            xticklabels = xticks
+            units = 'bp'
+        ax.set_xticklabels(xticklabels)
+        ax.set_title(chrom)
+        ax.set_xlabel('Position ({})'.format(units))
+        if legend:
+            if legend_kws is None:
+                legend_kws = dict()
+            legend_kws.setdefault('loc', 'upper left')
+            legend_kws.setdefault('bbox_to_anchor', (1, 1))
+            legend_kws.setdefault('title', 'Population')
+            ax.legend(**legend_kws)
+
+    def windowed_diversity_delta_chromplot(self, chrom, window_size, pop1, pop2,
+                                           callset=Key.MAIN, eqaccess=True,
+                                           ax=None, plot_kws=None, legend=True, legend_kws=None):
+
+        # load data
+        windows, pi1 = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop1,
+                                               callset=callset,
+                                               eqaccess=eqaccess)
+        _, pi2 = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop2,
+                                         callset=callset,
+                                         eqaccess=eqaccess)
+
+        # plot as percent
+        delta = (pi1 - pi2) * 100
+
+        # main plot
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        if plot_kws is None:
+            plot_kws = dict()
+        plot_kws.setdefault('linewidth', 0)
+        pop1_label = self.get_population_label(pop1)
+        pop2_label = self.get_population_label(pop2)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 2))
+        x = windows.mean(axis=1)
+        ax.fill_between(x, delta, where=delta>0, label=pop1_label)
+        ax.fill_between(x, delta, where=delta<0, label=pop2_label)
+
+        # tidy
+        chrom_size = len(self.genome_assembly[chrom])
+        ax.set_xlim(0, chrom_size)
+        ax.set_ylabel(r'$\Delta \theta_{\pi}$ (%)')
+        xticks = ax.get_xticks()
+        if chrom_size > 1e6:
+            xticklabels = xticks / 1e6
+            units = 'Mbp'
+        elif chrom_size > 1e5:
+            xticklabels = xticks / 1e5
+            units = 'kbp'
+        else:
+            xticklabels = xticks
+            units = 'bp'
+        ax.set_xticklabels(xticklabels)
+        ax.set_title(chrom)
+        ax.set_xlabel('Position ({})'.format(units))
+        if legend:
+            if legend_kws is None:
+                legend_kws = dict()
+            legend_kws.setdefault('loc', 'upper left')
+            legend_kws.setdefault('bbox_to_anchor', (1, 1))
+            legend_kws.setdefault('title', 'Population')
+            ax.legend(**legend_kws)
+
+    def genomeplot(self, plotf, chroms, fig=None, gridspec_kws=None, **kwargs):
+        """TODO"""
+
+        from matplotlib.gridspec import GridSpec
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        if fig is None:
+            fig = plt.figure(figsize=(8, 2))
+
+        # setup subplots
+        if fig.axes:
+            # assume axes already set up
+            axs = fig.axes
+            if len(axs) != len(chroms):
+                raise ValueError('Figure has wrong number of axes; expected {}, found {}.'
+                                 .format(len(chroms), len(axs)))
+        else:
+            # setup gridspec
+            chrom_sizes = [len(self.genome_assembly[chrom]) for chrom in chroms]
+            if gridspec_kws is None:
+                gridspec_kws = dict()
+            gridspec_kws.setdefault('width_ratios', chrom_sizes)
+            gs = GridSpec(nrows=1, ncols=len(chroms), **gridspec_kws)
+            axs = []
+            for i in range(len(chroms)):
+                if i == 0:
+                    ax = fig.add_subplot(gs[i])
+                else:
+                    ax = fig.add_subplot(gs[i], sharey=axs[0])
+                axs.append(ax)
+
+        # do plotting
+        # see https://stackoverflow.com/questions/22511550/gridspec-with-shared-axes-in-python
+        legend = kwargs.pop('legend', True)
+        legend_kws = kwargs.pop('legend_kws', dict())
+        for i, (ax, chrom) in enumerate(zip(axs, chroms)):
+            plotf(chrom=chrom, ax=ax, legend=False, **kwargs)
+            if i > 0:
+                ax.set_xlabel('')
+                ax.set_ylabel('')
+                plt.setp(ax.get_yticklabels(), visible=False)
+
+        # legend
+        if legend:
+            legend_kws.setdefault('loc', 'upper left')
+            legend_kws.setdefault('bbox_to_anchor', (1, 1))
+            axs[-1].legend(**legend_kws)
+
+        # tidy up
+        fig.tight_layout(w_pad=0)
+
+    def windowed_diversity_genomeplot(self, chroms, fig=None, gridspec_kws=None, **kwargs):
+        """TODO"""
+        kwargs.setdefault('legend_kws', dict(title='Population'))
+        self.genomeplot(self.windowed_diversity_chromplot, chroms=chroms, fig=fig,
+                        gridspec_kws=gridspec_kws, **kwargs)
+
+    def windowed_diversity_delta_genomeplot(self, chroms, fig=None, gridspec_kws=None, **kwargs):
+        """TODO"""
+        kwargs.setdefault('legend_kws', dict(title='Population'))
+        self.genomeplot(self.windowed_diversity_delta_chromplot, chroms=chroms, fig=fig,
+                        gridspec_kws=gridspec_kws, **kwargs)
+
+    # TODO windowed_diversity_delta_genome_plot
+
+    def __repr__(self):
+        r = '<PopulationAnalysis at {!r}>'.format(self.path)
+        return r
 
 
 class CacheMiss(Exception):

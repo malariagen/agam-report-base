@@ -481,13 +481,15 @@ class PopulationAnalysis(object):
                        label=None,
                        description=None,
                        down_sample=None,
-                       random_seed=None):
+                       random_seed=0):
         """TODO"""
 
         if query and samples:
             raise ValueError('Please provide either a query or a list of samples, not both.')
 
-        # TODO use name as label if label is None
+        # use name as label if label is None
+        if label is None:
+            label = name
 
         # common configuration
         conf = {
@@ -779,11 +781,58 @@ class PopulationAnalysis(object):
 
             return result
 
+    def windowed_diversity_ci(self, chrom, window_size, pop=None,
+                              callset=Key.MAIN, eqaccess=True, random_seed=0,
+                              average=np.median, ci_kws=None):
+        """TODO"""
+
+        # setup parameters
+        samples, _ = self.locate_samples(callset=callset, pop=pop)
+        params = dict(
+            chrom=chrom,
+            window_size=window_size,
+            callset=self.config.get_callset(callset),
+            samples=samples,
+            eqaccess=eqaccess,
+            random_seed=random_seed,
+            average=average,
+            ci_kws=ci_kws,
+        )
+
+        # check cache
+        cache_section = inspect.currentframe().f_code.co_name
+        params_doc, cache_key = hash_params(params)
+
+        try:
+
+            # load from cache
+            return self.cache_load(cache_section, cache_key)
+
+        except CacheMiss:
+
+            # load data
+            _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
+                                            callset=callset, eqaccess=eqaccess)
+
+            # compute CI
+            np.random.seed(random_seed)
+            import scikits.bootstrap as bootstrap
+            if ci_kws is None:
+                ci_kws = dict()
+            ci_kws['statfunction'] = average
+            ci = bootstrap.ci(pi, **ci_kws)
+            m = average(pi)
+
+            # cache result
+            result = np.array([m, ci[0], ci[1]])
+            self.cache_save(section=cache_section, key=cache_key, result=result, params=params_doc)
+
+            return result
+
     def windowed_diversity_distplot(self, chrom, window_size,
-                                    # window_start=None, window_stop=None, window_step=None,
                                     pop=None, callset=Key.MAIN, eqaccess=True,
                                     ax=None, plot_kws=None, average=np.median, ci_kws=None,
-                                    xlim=None):
+                                    random_seed=0, xlim=None):
 
         # load pop config
         pop_conf = self.config.get_population(pop)
@@ -818,17 +867,14 @@ class PopulationAnalysis(object):
             ax.set_xlim(*xlim)
 
         # annotate average
-        # TODO refactor CI code to remove duplication
         if average is not None:
-            import scikits.bootstrap as bootstrap
-            if ci_kws is None:
-                ci_kws = dict()
-            ci_kws['statfunction'] = average
-            ci = bootstrap.ci(pi, **ci_kws)
-            m = average(pi)
+            m, lo, hi = self.windowed_diversity_ci(chrom=chrom, window_size=window_size, pop=pop,
+                                                   callset=callset, eqaccess=eqaccess,
+                                                   average=average, random_seed=random_seed,
+                                                   ci_kws=ci_kws)
             ax.text(0.02, 0.98,
                     '{}={:.3f}%\n95% CI [{:.3f}-{:.3f}]'
-                    .format(average.__name__, m, ci[0], ci[1]),
+                    .format(average.__name__, m*100, lo*100, hi*100),
                     ha='left', va='top', transform=ax.transAxes)
 
     def get_population_label(self, pop):
@@ -889,29 +935,9 @@ class PopulationAnalysis(object):
             ax.set_ylim(bottom=0)
         ax.set_title(chrom_label)
 
-    def windowed_diversity_average_ci(self, chrom, window_size, pop=None,
-                                      # window_start=None, window_stop=None, window_step=None,
-                                      callset=Key.MAIN, eqaccess=True,
-                                      average=np.median, ci_kws=None):
-        """TODO"""
-
-        # load data
-        _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                        callset=callset, eqaccess=eqaccess)
-
-        # compute CI
-        import scikits.bootstrap as bootstrap
-        if ci_kws is None:
-            ci_kws = dict()
-        ci_kws['statfunction'] = average
-        ci = bootstrap.ci(pi, **ci_kws)
-        m = average(pi)
-
-        return m, list(ci)
-
     def windowed_diversity_compare(self, chrom, window_size, pops,
                                    # window_start=None, window_stop=None, window_step=None,
-                                   callset=Key.MAIN, eqaccess=True,
+                                   callset=Key.MAIN, eqaccess=True, random_seed=0,
                                    average=np.median, ci_kws=None):
 
         # load data
@@ -935,23 +961,17 @@ class PopulationAnalysis(object):
         self.log(title)
 
         # compute averages and CIs
-        # TODO refactor CI code to remove duplication and cache result
-        import scikits.bootstrap as bootstrap
-        if ci_kws is None:
-            ci_kws = dict()
-        ci_kws['statfunction'] = average
         for pop in pops:
-            # compute as percent
-            result = results[pop]
-            pi = result[1] * 100
-            ci = bootstrap.ci(pi, **ci_kws)
-            m = average(pi)
+            m, lo, hi = self.windowed_diversity_ci(chrom=chrom, window_size=window_size, pop=pop,
+                                                   callset=callset, eqaccess=eqaccess,
+                                                   random_seed=random_seed, average=average,
+                                                   ci_kws=ci_kws)
             label = self.get_population_label(pop)
+            # show as percent
             self.log('{} : {}={:.3f}%; 95% CI [{:.3f}-{:.3f}]'
-                     .format(label.ljust(label_len), average.__name__, m, ci[0], ci[1]))
+                     .format(label.ljust(label_len), average.__name__, m*100, lo*100, hi*100))
 
         # compare pairwise
-        # TODO refactor Wilcoxon code to remove duplication and cache result?
         import itertools
         import scipy.stats
         for pop1, pop2 in itertools.combinations(pops, 2):
@@ -1128,8 +1148,6 @@ class PopulationAnalysis(object):
         kwargs.setdefault('legend_kws', dict(title='Population'))
         self.genomeplot(self.windowed_diversity_delta_chromplot, chroms=chroms, fig=fig,
                         gridspec_kws=gridspec_kws, **kwargs)
-
-    # TODO windowed_diversity_delta_genome_plot
 
     def __repr__(self):
         r = '<PopulationAnalysis at {!r}>'.format(self.path)

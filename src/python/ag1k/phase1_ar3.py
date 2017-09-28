@@ -107,7 +107,7 @@ def init(release_dir, load_geneset=False):
     # variant callsets
     ##################
 
-    global callset, callset_pass
+    global callset, callset_pass, callset_h5_fn, callset_pass_h5_fn
     variation_dir = os.path.join(release_dir, 'variation')
 
     # main callset

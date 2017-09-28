@@ -30,6 +30,7 @@ class Key(object):
     DESCRIPTION = 'description'
     QUERY = 'query'
     COLOR = 'color'
+    MARKER = 'marker'
     DOWN_SAMPLE = 'down_sample'
     RANDOM_SEED = 'random_seed'
     GENOTYPE_DATASET = 'genotype_dataset'

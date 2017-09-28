@@ -10,6 +10,9 @@ import inspect
 
 # third party imports
 import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
 import pyfasta
 import allel
 import h5py
@@ -474,6 +477,7 @@ class PopulationAnalysis(object):
                        query=None,
                        samples=None,
                        color=None,
+                       marker='o',
                        label=None,
                        description=None,
                        down_sample=None,
@@ -487,7 +491,8 @@ class PopulationAnalysis(object):
 
         # common configuration
         conf = {
-            Key.COLOR: color,
+            Key.COLOR: mpl.colors.to_hex(color),
+            Key.MARKER: marker,
             Key.LABEL: label,
             Key.DESCRIPTION: description,
             Key.DOWN_SAMPLE: down_sample,
@@ -780,6 +785,10 @@ class PopulationAnalysis(object):
                                     ax=None, plot_kws=None, average=np.median, ci_kws=None,
                                     xlim=None):
 
+        # load pop config
+        pop_conf = self.config.get_population(pop)
+        color = pop_conf[Key.COLOR]
+
         # load data
         _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
                                         callset=callset, eqaccess=eqaccess)
@@ -792,10 +801,10 @@ class PopulationAnalysis(object):
         pi = pi * 100
 
         # main plot
-        import seaborn as sns
         if plot_kws is None:
             plot_kws = dict()
         plot_kws.setdefault('ax', ax)
+        plot_kws.setdefault('color', color)
         ax = sns.distplot(pi, **plot_kws)
 
         # tidy up
@@ -855,11 +864,18 @@ class PopulationAnalysis(object):
         else:
             chrom_label = 'Chromosome: ' + chrom
 
+        # find colors
+        palette = sns.color_palette(n_colors=len(pops))
+        for i, pop in enumerate(pops):
+            color = self.config.get_population(pop)[Key.COLOR]
+            if color is not None:
+                palette[i] = color
+
         # main plot
-        import seaborn as sns
         if plot_kws is None:
             plot_kws = dict()
         plot_kws['ax'] = ax
+        plot_kws['palette'] = palette
         ax = sns.violinplot(data=data, **plot_kws)
 
         # tidy up
@@ -961,11 +977,11 @@ class PopulationAnalysis(object):
         pi = pi * 100
 
         # main plot
-        import matplotlib.pyplot as plt
-        import seaborn as sns
+        color = self.config.get_population(pop)[Key.COLOR]
         if plot_kws is None:
             plot_kws = dict()
         plot_kws.setdefault('linewidth', 1)
+        plot_kws.setdefault('color', color)
         pop_label = self.get_population_label(pop)
         plot_kws.setdefault('label', pop_label)
         if ax is None:
@@ -1015,18 +1031,18 @@ class PopulationAnalysis(object):
         delta = (pi1 - pi2) * 100
 
         # main plot
-        import matplotlib.pyplot as plt
-        import seaborn as sns
         if plot_kws is None:
             plot_kws = dict()
         plot_kws.setdefault('linewidth', 0)
         pop1_label = self.get_population_label(pop1)
         pop2_label = self.get_population_label(pop2)
+        pop1_color = self.config.get_population(pop1)[Key.COLOR]
+        pop2_color = self.config.get_population(pop2)[Key.COLOR]
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 2))
         x = windows.mean(axis=1)
-        ax.fill_between(x, delta, where=delta>0, label=pop1_label)
-        ax.fill_between(x, delta, where=delta<0, label=pop2_label)
+        ax.fill_between(x, delta, where=delta>0, label=pop1_label, color=pop1_color)
+        ax.fill_between(x, delta, where=delta<0, label=pop2_label, color=pop2_color)
 
         # tidy
         chrom_size = len(self.genome_assembly[chrom])
@@ -1056,9 +1072,6 @@ class PopulationAnalysis(object):
     def genomeplot(self, plotf, chroms, fig=None, gridspec_kws=None, **kwargs):
         """TODO"""
 
-        from matplotlib.gridspec import GridSpec
-        import matplotlib.pyplot as plt
-        import seaborn as sns
         if fig is None:
             fig = plt.figure(figsize=(8, 2))
 
@@ -1075,7 +1088,7 @@ class PopulationAnalysis(object):
             if gridspec_kws is None:
                 gridspec_kws = dict()
             gridspec_kws.setdefault('width_ratios', chrom_sizes)
-            gs = GridSpec(nrows=1, ncols=len(chroms), **gridspec_kws)
+            gs = mpl.gridspec.GridSpec(nrows=1, ncols=len(chroms), **gridspec_kws)
             axs = []
             for i in range(len(chroms)):
                 if i == 0:

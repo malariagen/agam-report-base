@@ -45,6 +45,12 @@ class Format(object):
     CSV = 'csv'
 
 
+class Statistic(object):
+    DIVERSITY = 'diversity'
+    WATTERSON_THETA = 'watterson_theta'
+    TAJIMA_D = 'tajima_d'
+
+
 class ConfigFile(object):
 
     def __init__(self,

@@ -21,7 +21,7 @@ import psutil
 
 
 # internal imports
-from .config import YAMLConfigFile, Key, Format
+from .config import YAMLConfigFile, Key, Format, Statistic
 from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset, \
     hash_params
 from .caching import CacheMiss, MemoryCache, PersistentCache
@@ -317,7 +317,8 @@ class PopulationAnalysis(object):
         if name == Key.MAIN:
             self._sample_table = df
 
-        # TODO use name as label if label is None
+        if label is None:
+            label = name
 
         # store configuration
         conf = {
@@ -457,7 +458,8 @@ class PopulationAnalysis(object):
         self.log('Setting callset {!r}; found {:,} chromosomes, {:,} samples, {:,} variants.'
                  .format(name, n_chroms, n_samples, n_variants))
 
-        # TODO use name as label if label is None
+        if label is None:
+            label = name
 
         # store configuration
         conf = {
@@ -547,6 +549,15 @@ class PopulationAnalysis(object):
 
         return samples
 
+    def get_population_label(self, pop):
+        """TODO"""
+        label = self.config.get_population(pop)[Key.LABEL]
+        if label is None:
+            label = pop
+        n_samples = len(self.get_population_samples(pop))
+        label += ' (n={})'.format(n_samples)
+        return label
+
     def open_callset(self, callset=Key.MAIN):
         """TODO"""
         config = self.config.get_callset(callset)
@@ -574,40 +585,39 @@ class PopulationAnalysis(object):
             close_callset(callset_root)
         return samples
 
-    def locate_samples(self, callset=Key.MAIN, pop=None, downsample=None, seed=None):
+    def locate_samples(self, callset=Key.MAIN, pop=None):
         """TODO"""
 
         callset_samples = self.get_callset_samples(callset)
+
         if pop:
             samples = self.get_population_samples(pop)
-        else:
-            samples = callset_samples
-
-        # deal with downsampling
-        if downsample:
-            if downsample > len(samples):
-                raise ValueError('Not enough samples ({}) to downsample to {}.'
-                                 .format(len(samples), downsample))
-            random.seed(seed)
-            samples = sorted(random.sample(samples, downsample))
-
-        # find sample indices
-        if samples == callset_samples:
-            # no selection, use None to indicate all samples
-            samples = None
-            sample_indices = None
-
-        else:
             sample_indices = list()
             for s in samples:
                 if s not in callset_samples:
                     raise ValueError('Sample {!r} not found in callset {!r}'
                                      .format(s, callset))
                 sample_indices.append(callset_samples.index(s))
+            sample_indices = sorted(sample_indices)
+
+        else:
+            # use None to indicate all samples
+            samples = None
+            sample_indices = None
 
         return samples, sample_indices
 
-    def cache_save(self, section, key, params, result):
+    def load_variant_index(self, chrom, callset=Key.MAIN):
+        """TODO"""
+        callset_root = self.open_callset(callset)
+        try:
+            pos = callset_root[chrom]['variants']['POS'][:]
+            pos = allel.SortedIndex(pos)
+        finally:
+            close_callset(callset_root)
+        return pos
+
+    def cache_put(self, section, key, params, result):
 
         # store in persistent cache
         self.persistent_cache.put(section=section, key=key, result=result, params=params)
@@ -615,7 +625,7 @@ class PopulationAnalysis(object):
         # store in memory cache
         self.memory_cache.put(section=section, key=key, result=result)
 
-    def cache_load(self, section, key):
+    def cache_get(self, section, key):
 
         # try memory cache
         try:
@@ -638,16 +648,12 @@ class PopulationAnalysis(object):
     def count_alleles(self, chrom, callset=Key.MAIN, pop=None):
         """TODO"""
 
-        # determine which samples to include
-        samples, sample_indices = self.locate_samples(callset=callset, pop=pop)
-
         # setup parameters
         callset_conf = self.config.get_callset(callset)
         params = dict(
             chrom=chrom,
-            # N.B., include full callset config here in case it gets changed
             callset=callset_conf,
-            samples=samples,
+            pop=self.config.get_population(pop) if pop else pop,
         )
 
         # check cache
@@ -655,37 +661,29 @@ class PopulationAnalysis(object):
         params_doc, cache_key = hash_params(params)
 
         try:
-            result = self.cache_load(cache_section, cache_key)
+            result = self.cache_get(cache_section, cache_key)
 
         except CacheMiss:
 
+            # determine which samples to include
+            samples, sample_indices = self.locate_samples(callset=callset, pop=pop)
+
+            # access some configuration
             genotype_dataset = callset_conf[Key.GENOTYPE_DATASET]
             max_allele = callset_conf[Key.MAX_ALLELE]
+
+            # open the callset
             callset_root = self.open_callset(callset)
 
             try:
                 # get genotype array
                 gt = allel.GenotypeDaskArray(callset_root[chrom]['calldata'][genotype_dataset])
 
-                # determine dtype
-                if samples is None:
-                    n_haps = gt.shape[1] * 2
-                else:
-                    n_haps = len(samples) * 2
-                if n_haps > np.iinfo('u4').max:
-                    dtype = 'u8'
-                elif n_haps > np.iinfo('u2').max:
-                    dtype = 'u4'
-                elif n_haps > np.iinfo('u1').max:
-                    dtype = 'u2'
-                else:
-                    dtype = 'u1'
-
                 # run computation
                 result = (
                     gt
                     .count_alleles(max_allele=max_allele, subpop=sample_indices)
-                    .astype(dtype)
+                    .astype('i4')
                     .compute()
                 )
                 # TODO fix upstream why this is coming out as int64
@@ -694,49 +692,32 @@ class PopulationAnalysis(object):
                 close_callset(callset_root)
 
             # save result
-            self.cache_save(cache_section, cache_key, params_doc, result)
+            self.cache_put(cache_section, cache_key, params_doc, result)
 
         return allel.AlleleCountsArray(result)
 
-    # TODO __repr__
+    def windowed_statistic(self, statistic, chrom, window_size, pop=None, callset=Key.MAIN,
+                           eqaccess=True):
 
-    def load_variant_index(self, chrom, callset=Key.MAIN):
-        """TODO"""
-        callset_root = self.open_callset(callset)
-        try:
-            pos = callset_root[chrom]['variants']['POS'][:]
-            pos = allel.SortedIndex(pos)
-        finally:
-            close_callset(callset_root)
-        return pos
+        # setup statistic
+        statistic = norm_statistic_arg(statistic)
 
-    def windowed_diversity(self, chrom, window_size,
-                           # window_start=None, window_stop=None, window_step=None,
-                           pop=None, callset=Key.MAIN, eqaccess=True):
-        """TODO"""
-
-        # handle multiple chromosomes
+        # handle multiple chroms
         if isinstance(chrom, (list, tuple)):
-            results = [self.windowed_diversity(chrom=c, window_size=window_size, pop=pop,
+            results = [self.windowed_statistic(statistic, chrom=c, window_size=window_size, pop=pop,
                                                callset=callset, eqaccess=eqaccess)
                        for c in chrom]
             windows = np.concatenate([result[0] for result in results])
-            pi = np.concatenate([result[1] for result in results])
-            return windows, pi
-
-        # determine which samples to include
-        samples, sample_indices = self.locate_samples(callset=callset, pop=pop)
+            values = np.concatenate([result[1] for result in results])
+            return windows, values
 
         # setup parameters
         params = dict(
+            statistic=statistic,
             chrom=chrom,
             window_size=window_size,
-            # window_start=window_start,
-            # window_stop=window_stop,
-            # window_step=window_step,
-            # N.B., include full callset config here in case it gets changed
             callset=self.config.get_callset(callset),
-            samples=samples,
+            pop=self.config.get_population(pop) if pop else pop,
             eqaccess=eqaccess,
         )
 
@@ -747,7 +728,7 @@ class PopulationAnalysis(object):
         try:
 
             # load from cache
-            return self.cache_load(cache_section, cache_key)
+            return self.cache_get(cache_section, cache_key)
 
         except CacheMiss:
 
@@ -761,7 +742,6 @@ class PopulationAnalysis(object):
             is_accessible = self.load_genome_accessibility(chrom)
 
             # setup windows
-            # TODO add support for start, stop and step
             if eqaccess:
                 windows = allel.equally_accessible_windows(is_accessible=is_accessible,
                                                            size=window_size)
@@ -771,28 +751,38 @@ class PopulationAnalysis(object):
                 windows = allel.stats.window.position_windows(pos, size=window_size, start=1,
                                                               stop=chrom_size, step=window_size)
 
-            # run windowed computation
-            pi, _, _, _ = allel.windowed_diversity(pos, ac, windows=windows,
-                                                   is_accessible=is_accessible)
+            if statistic == Statistic.DIVERSITY:
+                values, _, _, _ = allel.windowed_diversity(pos=pos, ac=ac, windows=windows,
+                                                           is_accessible=is_accessible)
+            elif statistic == Statistic.WATTERSON_THETA:
+                values, _, _, _ = allel.windowed_watterson_theta(pos=pos, ac=ac, windows=windows,
+                                                                 is_accessible=is_accessible)
+            elif statistic == Statistic.TAJIMA_D:
+                values, _, _ = allel.windowed_tajima_d(pos=pos, ac=ac, windows=windows)
+
+            else:
+                raise RuntimeError('Unexpected statistic: {!r}.'.format(statistic))
 
             # save result
-            result = windows, pi
-            self.cache_save(section=cache_section, key=cache_key, result=result, params=params_doc)
+            result = windows, values
+            self.cache_put(section=cache_section, key=cache_key, result=result, params=params_doc)
 
             return result
 
-    def windowed_diversity_ci(self, chrom, window_size, pop=None,
-                              callset=Key.MAIN, eqaccess=True, random_seed=0,
-                              average=np.median, ci_kws=None):
+    def windowed_statistic_ci(self, statistic, chrom, window_size, pop=None, callset=Key.MAIN,
+                              eqaccess=True, random_seed=0, average=np.median, ci_kws=None):
         """TODO"""
 
+        # normalise statistic
+        statistic = norm_statistic_arg(statistic)
+
         # setup parameters
-        samples, _ = self.locate_samples(callset=callset, pop=pop)
         params = dict(
+            statistic=statistic,
             chrom=chrom,
             window_size=window_size,
             callset=self.config.get_callset(callset),
-            samples=samples,
+            pop=self.config.get_population(pop) if pop else pop,
             eqaccess=eqaccess,
             random_seed=random_seed,
             average=average,
@@ -806,13 +796,13 @@ class PopulationAnalysis(object):
         try:
 
             # load from cache
-            return self.cache_load(cache_section, cache_key)
+            return self.cache_get(cache_section, cache_key)
 
         except CacheMiss:
 
             # load data
-            _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                            callset=callset, eqaccess=eqaccess)
+            _, values = self.windowed_statistic(statistic, chrom=chrom, window_size=window_size,
+                                                pop=pop, callset=callset, eqaccess=eqaccess)
 
             # compute CI
             np.random.seed(random_seed)
@@ -820,89 +810,101 @@ class PopulationAnalysis(object):
             if ci_kws is None:
                 ci_kws = dict()
             ci_kws['statfunction'] = average
-            ci = bootstrap.ci(pi, **ci_kws)
-            m = average(pi)
+            ci = bootstrap.ci(values, **ci_kws)
+            m = average(values)
 
             # cache result
             result = np.array([m, ci[0], ci[1]])
-            self.cache_save(section=cache_section, key=cache_key, result=result, params=params_doc)
+            self.cache_put(section=cache_section, key=cache_key, result=result, params=params_doc)
 
             return result
 
-    def windowed_diversity_distplot(self, chrom, window_size,
+    def windowed_statistic_distplot(self, statistic, chrom, window_size,
                                     pop=None, callset=Key.MAIN, eqaccess=True,
                                     ax=None, plot_kws=None, average=np.median, ci_kws=None,
                                     random_seed=0, xlim=None):
+        """TODO"""
 
-        # load pop config
-        pop_conf = self.config.get_population(pop)
-        color = pop_conf[Key.COLOR]
+        statistic = norm_statistic_arg(statistic)
 
         # load data
-        _, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                        callset=callset, eqaccess=eqaccess)
+        _, values = self.windowed_statistic(statistic, chrom=chrom, window_size=window_size,
+                                            pop=pop, callset=callset, eqaccess=eqaccess)
+
+        # load pop config
+        if pop:
+            pop_conf = self.config.get_population(pop)
+            color = pop_conf[Key.COLOR]
+            pop_label = self.get_population_label(pop)
+        else:
+            color = None
+            pop_label = 'All samples'
+
+        # setup some labels
         if isinstance(chrom, (list, tuple)):
             chrom_label = 'Chromosomes: ' + ', '.join(chrom)
         else:
             chrom_label = 'Chromosome: ' + chrom
+        xlabel = statistic_plot_label[statistic]
 
-        # plot as percent
-        pi = pi * 100
+        if statistic in {Statistic.DIVERSITY, Statistic.WATTERSON_THETA}:
+            # plot as percent
+            values = values * 100
+            xlabel = '{} (%)'.format(xlabel)
 
         # main plot
         if plot_kws is None:
             plot_kws = dict()
         plot_kws.setdefault('ax', ax)
         plot_kws.setdefault('color', color)
-        ax = sns.distplot(pi, **plot_kws)
+        ax = sns.distplot(values, **plot_kws)
 
         # tidy up
-        ax.set_xlim(left=0)
-        ax.set_xlabel(r'$\theta_{\pi}$ (%)')
+        ax.set_xlabel(xlabel)
         ax.set_ylabel('Frequency')
-        pop_label = self.get_population_label(pop)
-        ax.set_title('Population: {}; {}'
-                     .format(pop_label, chrom_label))
+        ax.set_title('Population: {}; {}'.format(pop_label, chrom_label))
         if xlim:
             ax.set_xlim(*xlim)
 
         # annotate average
         if average is not None:
-            m, lo, hi = self.windowed_diversity_ci(chrom=chrom, window_size=window_size, pop=pop,
-                                                   callset=callset, eqaccess=eqaccess,
+            m, lo, hi = self.windowed_statistic_ci(statistic, chrom=chrom, window_size=window_size,
+                                                   pop=pop, callset=callset, eqaccess=eqaccess,
                                                    average=average, random_seed=random_seed,
                                                    ci_kws=ci_kws)
+            if statistic in {Statistic.DIVERSITY, Statistic.WATTERSON_THETA}:
+                m, lo, hi = m * 100, lo * 100, hi * 100
+                units = '%'
+            else:
+                units = ''
             ax.text(0.02, 0.98,
-                    '{}={:.3f}%\n95% CI [{:.3f}-{:.3f}]'
-                    .format(average.__name__, m*100, lo*100, hi*100),
+                    '{}={:.3f}{}\n95% CI [{:.3f}-{:.3f}]'
+                    .format(average.__name__, m, units, lo, hi),
                     ha='left', va='top', transform=ax.transAxes)
 
-    def get_population_label(self, pop):
-        """TODO"""
-        label = self.config.get_population(pop)[Key.LABEL]
-        if label is None:
-            label = pop
-        n_samples = len(self.get_population_samples(pop))
-        label += ' (n={})'.format(n_samples)
-        return label
-
-    def windowed_diversity_violinplot(self, chrom, window_size, pops=None,
-                                      # window_start=None, window_stop=None, window_step=None,
+    def windowed_statistic_violinplot(self, statistic, chrom, window_size, pops=None,
                                       callset=Key.MAIN, eqaccess=True,
                                       ax=None, plot_kws=None, ylim=None):
         """TODO"""
+
+        statistic = norm_statistic_arg(statistic)
 
         # load data
         if isinstance(pops, str):
             pops = [pops]
         results = [
-            self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop, callset=callset,
-                                    eqaccess=eqaccess)
+            self.windowed_statistic(statistic, chrom=chrom, window_size=window_size, pop=pop,
+                                    callset=callset, eqaccess=eqaccess)
             for pop in pops
         ]
 
-        # plot as percent
-        data = [pi * 100 for _, pi in results]
+        ylabel = statistic_plot_label[statistic]
+        if statistic in {Statistic.DIVERSITY, Statistic.WATTERSON_THETA}:
+            # plot as percent
+            data = [values * 100 for _, values in results]
+            ylabel += ' (%)'
+        else:
+            data = [values for _, values in results]
 
         # handle multiple chroms
         if isinstance(chrom, (list, tuple)):
@@ -928,73 +930,71 @@ class PopulationAnalysis(object):
         pop_labels = [self.get_population_label(pop) for pop in pops]
         ax.set_xticklabels(pop_labels)
         ax.set_xlabel('Population')
-        ax.set_ylabel(r'$\theta_{\pi}$ (%)')
+        ax.set_ylabel(ylabel)
         if ylim:
             ax.set_ylim(*ylim)
-        else:
-            ax.set_ylim(bottom=0)
         ax.set_title(chrom_label)
 
-    def windowed_diversity_compare(self, chrom, window_size, pops,
-                                   # window_start=None, window_stop=None, window_step=None,
+    def windowed_statistic_compare(self, statistic, chrom, window_size, pops,
                                    callset=Key.MAIN, eqaccess=True, random_seed=0,
                                    average=np.median, ci_kws=None):
 
+        statistic = norm_statistic_arg(statistic)
+
         # load data
-        results = {pop: self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                                callset=callset,
-                                                eqaccess=eqaccess)
+        results = {pop: self.windowed_statistic(statistic, chrom=chrom, window_size=window_size,
+                                                pop=pop, callset=callset, eqaccess=eqaccess)
                    for pop in pops}
 
         # setup printing
         pop_labels = [self.get_population_label(pop) for pop in pops]
         label_len = max(len(l) for l in pop_labels)
 
-        # handle multiple chroms
-        if isinstance(chrom, (list, tuple)):
-            chrom_label = 'chromosomes ' + ', '.join(chrom)
-        else:
-            chrom_label = 'Chromosome ' + chrom
-
-        title = 'Nucleotide diversity; {}\n'.format(chrom_label)
-        title += '-' * (len(title) - 1)
-        self.log(title)
-
         # compute averages and CIs
         for pop in pops:
-            m, lo, hi = self.windowed_diversity_ci(chrom=chrom, window_size=window_size, pop=pop,
-                                                   callset=callset, eqaccess=eqaccess,
+            m, lo, hi = self.windowed_statistic_ci(statistic, chrom=chrom, window_size=window_size,
+                                                   pop=pop, callset=callset, eqaccess=eqaccess,
                                                    random_seed=random_seed, average=average,
                                                    ci_kws=ci_kws)
+            if statistic in {Statistic.DIVERSITY, Statistic.WATTERSON_THETA}:
+                # show as percent
+                m, lo, hi = m * 100, lo * 100, hi * 100
+                units = '%'
+            else:
+                units = ''
             label = self.get_population_label(pop)
-            # show as percent
-            self.log('{} : {}={:.3f}%; 95% CI [{:.3f}-{:.3f}]'
-                     .format(label.ljust(label_len), average.__name__, m*100, lo*100, hi*100))
+            self.log('{} : {}={:.3f}{}; 95% CI [{:.3f}-{:.3f}]'
+                     .format(label.ljust(label_len), average.__name__, m, units, lo, hi))
 
         # compare pairwise
         import itertools
         import scipy.stats
         for pop1, pop2 in itertools.combinations(pops, 2):
-            pi1 = results[pop1][1]
-            pi2 = results[pop2][1]
+            vals1 = results[pop1][1]
+            vals2 = results[pop2][1]
             lbl1 = self.get_population_label(pop1)
             lbl2 = self.get_population_label(pop2)
-            t, p = scipy.stats.wilcoxon(pi1, pi2)
+            t, p = scipy.stats.wilcoxon(vals1, vals2)
             p_fmt = '{:.2e}' if p < 1e-3 else '{:.3f}'
             p_str = p_fmt.format(p)
             self.log('{} versus {} : Wilcoxon signed rank test P={}; statistic={:.1f}'
                      .format(lbl1, lbl2, p_str, t))
 
-    def windowed_diversity_chromplot(self, chrom, window_size, pop=None,
-                                     callset=Key.MAIN, eqaccess=True,
-                                     ax=None, plot_kws=None, legend=True, legend_kws=None):
+    def windowed_statistic_chromplot(self, statistic, chrom, window_size, pop=None,
+                                     callset=Key.MAIN, eqaccess=True, ax=None, plot_kws=None,
+                                     legend=True, legend_kws=None, ylim=None):
+
+        statistic = norm_statistic_arg(statistic)
 
         # load data
-        windows, pi = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop,
-                                              callset=callset,
-                                              eqaccess=eqaccess)
-        # plot as percent
-        pi = pi * 100
+        windows, values = self.windowed_statistic(statistic, chrom=chrom, window_size=window_size,
+                                                  pop=pop, callset=callset, eqaccess=eqaccess)
+
+        ylabel = statistic_plot_label[statistic]
+        if statistic in {Statistic.DIVERSITY, Statistic.WATTERSON_THETA}:
+            # plot as percent
+            values = values * 100
+            ylabel += ' (%)'
 
         # main plot
         color = self.config.get_population(pop)[Key.COLOR]
@@ -1007,18 +1007,19 @@ class PopulationAnalysis(object):
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 2))
         x = windows.mean(axis=1)
-        ax.plot(x, pi, **plot_kws)
+        ax.plot(x, values, **plot_kws)
 
         # tidy
         chrom_size = len(self.genome_assembly[chrom])
         ax.set_xlim(0, chrom_size)
-        ax.set_ylim(bottom=0)
-        ax.set_ylabel(r'$\theta_{\pi}$ (%)')
+        if ylim:
+            ax.set_ylim(*ylim)
+        ax.set_ylabel(ylabel)
         xticks = ax.get_xticks()
-        if chrom_size > 1e6:
+        if chrom_size > int(1e6):
             xticklabels = xticks / 1e6
             units = 'Mbp'
-        elif chrom_size > 1e5:
+        elif chrom_size > int(1e5):
             xticklabels = xticks / 1e5
             units = 'kbp'
         else:
@@ -1040,12 +1041,10 @@ class PopulationAnalysis(object):
                                            ax=None, plot_kws=None, legend=True, legend_kws=None):
 
         # load data
-        windows, pi1 = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop1,
-                                               callset=callset,
-                                               eqaccess=eqaccess)
-        _, pi2 = self.windowed_diversity(chrom=chrom, window_size=window_size, pop=pop2,
-                                         callset=callset,
-                                         eqaccess=eqaccess)
+        windows, pi1 = self.windowed_statistic('pi', chrom=chrom, window_size=window_size, pop=pop1,
+                                               callset=callset, eqaccess=eqaccess)
+        _, pi2 = self.windowed_statistic('pi', chrom=chrom, window_size=window_size, pop=pop2,
+                                         callset=callset, eqaccess=eqaccess)
 
         # plot as percent
         delta = (pi1 - pi2) * 100
@@ -1061,18 +1060,18 @@ class PopulationAnalysis(object):
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 2))
         x = windows.mean(axis=1)
-        ax.fill_between(x, delta, where=delta>0, label=pop1_label, color=pop1_color)
-        ax.fill_between(x, delta, where=delta<0, label=pop2_label, color=pop2_color)
+        ax.fill_between(x, delta, where=(delta > 0), label=pop1_label, color=pop1_color)
+        ax.fill_between(x, delta, where=(delta < 0), label=pop2_label, color=pop2_color)
 
         # tidy
         chrom_size = len(self.genome_assembly[chrom])
         ax.set_xlim(0, chrom_size)
         ax.set_ylabel(r'$\Delta \theta_{\pi}$ (%)')
         xticks = ax.get_xticks()
-        if chrom_size > 1e6:
+        if chrom_size > int(1e6):
             xticklabels = xticks / 1e6
             units = 'Mbp'
-        elif chrom_size > 1e5:
+        elif chrom_size > int(1e5):
             xticklabels = xticks / 1e5
             units = 'kbp'
         else:
@@ -1137,11 +1136,12 @@ class PopulationAnalysis(object):
         # tidy up
         fig.tight_layout(w_pad=0)
 
-    def windowed_diversity_genomeplot(self, chroms, fig=None, gridspec_kws=None, **kwargs):
+    def windowed_statistic_genomeplot(self, statistic, chroms, fig=None, gridspec_kws=None,
+                                      **kwargs):
         """TODO"""
         kwargs.setdefault('legend_kws', dict(title='Population'))
-        self.genomeplot(self.windowed_diversity_chromplot, chroms=chroms, fig=fig,
-                        gridspec_kws=gridspec_kws, **kwargs)
+        self.genomeplot(self.windowed_statistic_chromplot, statistic=statistic, chroms=chroms,
+                        fig=fig, gridspec_kws=gridspec_kws, **kwargs)
 
     def windowed_diversity_delta_genomeplot(self, chroms, fig=None, gridspec_kws=None, **kwargs):
         """TODO"""
@@ -1154,3 +1154,33 @@ class PopulationAnalysis(object):
         return r
 
 
+def norm_statistic_arg(s):
+    trans = str.maketrans({' ': '',
+                           '-': '',
+                           '_': '',
+                           ',': '',
+                           '\'': '',
+                           '"': '',
+                           })
+    s = str(s).lower().strip().translate(trans)
+    if s in {'pi', 'thetapi', 'diversity', 'nucleotidediversity'}:
+        return Statistic.DIVERSITY
+    if s in {'wattersontheta', 'wattersonstheta', 'thetaw', 'thetawatterson'}:
+        return Statistic.WATTERSON_THETA
+    if s in {'tajimad', 'tajimasd', 'dtajima', 'dtajimas'}:
+        return Statistic.TAJIMA_D
+    raise ValueError('Unsupported statistic: {!r}.'.format(s))
+
+
+statistic_text_label = {
+    Statistic.DIVERSITY: 'nucleotide diversity',
+    Statistic.WATTERSON_THETA: "Watterson's theta",
+    Statistic.TAJIMA_D: "Tajima's D",
+}
+
+
+statistic_plot_label = {
+    Statistic.DIVERSITY: r'$\theta_{\pi}$',
+    Statistic.WATTERSON_THETA: r"$\theta_{W}$",
+    Statistic.TAJIMA_D: "Tajima's $D$",
+}

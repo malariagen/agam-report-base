@@ -10,17 +10,18 @@ import inspect
 
 # third party imports
 import numpy as np
-import pandas
 import pyfasta
 import allel
 import h5py
 import zarr
+import psutil
 
 
 # internal imports
-from .config import YAMLConfigFile, Key, Format, Section
+from .config import YAMLConfigFile, Key, Format
 from .util import Logger, read_dataframe, guess_callset_format, open_callset, close_callset, \
     hash_params
+from .caching import CacheMiss, MemoryCache, PersistentCache
 
 
 class PopulationAnalysis(object):
@@ -48,10 +49,12 @@ class PopulationAnalysis(object):
         self._genome_annotation = None
         self._sample_table = None
 
-        # setup cache compressor
+        # setup caches
+        self.memory_cache = MemoryCache(capacity=psutil.virtual_memory().available//2)
         if cache_compressor is None:
             cache_compressor = zarr.Blosc(cname='zstd', clevel=1, shuffle=0)
-        self.cache_compressor = cache_compressor
+        self.persistent_cache = PersistentCache(path=os.path.join(self.path, 'cache'),
+                                                compressor=cache_compressor)
 
     def abs_path(self, path):
         # relative paths treated as relative to analysis directory
@@ -597,53 +600,33 @@ class PopulationAnalysis(object):
 
         return samples, sample_indices
 
-    def cache_save(self, cache_group, cache_key, params_doc, data, names=None):
-        # self.log('saving {}/{}'.format(cache_group, cache_key))
-        cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
-        group = cache.require_group(cache_group)
+    def cache_save(self, section, key, params, result):
 
-        if names is None:
-            # result is single array result
-            if cache_key in group:
-                del group[cache_key]
-            result = group.create_dataset(cache_key, dtype=data.dtype, shape=data.shape,
-                                          compressor=self.cache_compressor)
-            result[:] = data
+        # store in persistent cache
+        self.persistent_cache.put(section=section, key=key, result=result, params=params)
 
-        else:
-            # result is tuple of arrays
-            if cache_key in group:
-                del group[cache_key]
-            result = group.create_group(cache_key)
-            for n, d in zip(names, data):
-                ds = result.create_dataset(n, dtype=d.dtype, shape=d.shape,
-                                           compressor=self.cache_compressor)
-                ds[:] = d
+        # store in memory cache
+        self.memory_cache.put(section=section, key=key, result=result)
 
-        # mark success
-        result.attrs['__params__'] = params_doc
+    def cache_load(self, section, key):
 
-    def cache_load(self, cache_group, cache_key, names=None):
-        cache = zarr.open_group(os.path.join(self.path, 'cache'), mode='a')
-        group = cache.require_group(cache_group)
-
-        # look for result in cache
+        # try memory cache
         try:
-            if cache_key not in group:
-                raise CacheMiss
-            result = group[cache_key]
-            if '__params__' not in result.attrs:
-                # incomplete save
-                raise CacheMiss
+            return self.memory_cache.get(section, key)
         except CacheMiss:
-            self.log('computing {}/{}'.format(cache_group, cache_key))
+            pass
+
+        # try disk cache
+        try:
+            result = self.persistent_cache.get(section, key)
+        except CacheMiss:
+            self.log('computing', section, key)
             raise
 
-        # self.log('loading {}/{}'.format(cache_group, cache_key))
-        if names is None:
-            return result[:]
-        else:
-            return tuple(result[n][:] for n in names)
+        # store in memory cache
+        self.memory_cache.put(section, key, result)
+
+        return result
 
     def count_alleles(self, chrom, callset=Key.MAIN, pop=None):
         """TODO"""
@@ -661,11 +644,11 @@ class PopulationAnalysis(object):
         )
 
         # check cache
-        cache_group = inspect.currentframe().f_code.co_name
+        cache_section = inspect.currentframe().f_code.co_name
         params_doc, cache_key = hash_params(params)
 
         try:
-            result = self.cache_load(cache_group, cache_key)
+            result = self.cache_load(cache_section, cache_key)
 
         except CacheMiss:
 
@@ -677,14 +660,34 @@ class PopulationAnalysis(object):
                 # get genotype array
                 gt = allel.GenotypeDaskArray(callset_root[chrom]['calldata'][genotype_dataset])
 
+                # determine dtype
+                if samples is None:
+                    n_haps = gt.shape[1] * 2
+                else:
+                    n_haps = len(samples) * 2
+                if n_haps > np.iinfo('u4').max:
+                    dtype = 'u8'
+                elif n_haps > np.iinfo('u2').max:
+                    dtype = 'u4'
+                elif n_haps > np.iinfo('u1').max:
+                    dtype = 'u2'
+                else:
+                    dtype = 'u1'
+
                 # run computation
-                result = gt.count_alleles(max_allele=max_allele, subpop=sample_indices).compute()
+                result = (
+                    gt
+                    .count_alleles(max_allele=max_allele, subpop=sample_indices)
+                    .astype(dtype)
+                    .compute()
+                )
+                # TODO fix upstream why this is coming out as int64
 
             finally:
                 close_callset(callset_root)
 
             # save result
-            self.cache_save(cache_group, cache_key, params_doc, result)
+            self.cache_save(cache_section, cache_key, params_doc, result)
 
         return allel.AlleleCountsArray(result)
 
@@ -731,14 +734,13 @@ class PopulationAnalysis(object):
         )
 
         # check cache
-        cache_group = inspect.currentframe().f_code.co_name
+        cache_section = inspect.currentframe().f_code.co_name
         params_doc, cache_key = hash_params(params)
-        result_names = 'windows', 'pi'
 
         try:
 
             # load from cache
-            result = self.cache_load(cache_group, cache_key, names=result_names)
+            return self.cache_load(cache_section, cache_key)
 
         except CacheMiss:
 
@@ -760,7 +762,7 @@ class PopulationAnalysis(object):
             else:
                 chrom_size = len(self.genome_assembly[chrom])
                 windows = allel.stats.window.position_windows(pos, size=window_size, start=1,
-                                                              stop=chrom_size)
+                                                              stop=chrom_size, step=window_size)
 
             # run windowed computation
             pi, _, _, _ = allel.windowed_diversity(pos, ac, windows=windows,
@@ -768,10 +770,9 @@ class PopulationAnalysis(object):
 
             # save result
             result = windows, pi
-            self.cache_save(cache_group=cache_group, cache_key=cache_key, data=result,
-                            names=result_names, params_doc=params_doc)
+            self.cache_save(section=cache_section, key=cache_key, result=result, params=params_doc)
 
-        return result
+            return result
 
     def windowed_diversity_distplot(self, chrom, window_size,
                                     # window_start=None, window_stop=None, window_step=None,
@@ -808,6 +809,7 @@ class PopulationAnalysis(object):
             ax.set_xlim(*xlim)
 
         # annotate average
+        # TODO refactor CI code to remove duplication
         if average is not None:
             import scikits.bootstrap as bootstrap
             if ci_kws is None:
@@ -917,6 +919,7 @@ class PopulationAnalysis(object):
         self.log(title)
 
         # compute averages and CIs
+        # TODO refactor CI code to remove duplication and cache result
         import scikits.bootstrap as bootstrap
         if ci_kws is None:
             ci_kws = dict()
@@ -932,6 +935,7 @@ class PopulationAnalysis(object):
                      .format(label.ljust(label_len), average.__name__, m, ci[0], ci[1]))
 
         # compare pairwise
+        # TODO refactor Wilcoxon code to remove duplication and cache result?
         import itertools
         import scipy.stats
         for pop1, pop2 in itertools.combinations(pops, 2):
@@ -1119,5 +1123,3 @@ class PopulationAnalysis(object):
         return r
 
 
-class CacheMiss(Exception):
-    pass

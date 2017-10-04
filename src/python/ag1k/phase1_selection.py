@@ -35,7 +35,7 @@ def init(release_dir):
         fn = os.path.join(ws_dir, '{metric}.txt.gz').format(metric=metric)
 
         if os.path.exists(fn):
-            exec("{metric}_windowed=pandas.read_csv('{path}', sep='\t').set_index(['chrom', 'start', 'stop'])".format(metric=metric, path=fn), globals())
+            exec("{metric}_windowed=pandas.read_table('{path}').set_index(['chrom', 'start', 'stop'])".format(metric=metric, path=fn), globals())
 
     # raw data 
     ##########
@@ -56,11 +56,11 @@ def init(release_dir):
 
     temp = {}
     for f in files:
-        mm = re.search("([A-Za-z0-9]+)_(.+vs.+)\.xpclr\.txt\.gz", f)
+        mm = re.search("([A-Za-z0-9]+)_(.+vs.+)\.xpclr\.txt\.gz$", f)
         if mm is not None:
             chrom, comp = mm.groups()
             if chrom not in temp:
                 temp[chrom] = {}
-            temp[chrom][comp] = pandas.read_csv(os.path.join(output_dir, f), sep="\t")
+            temp[chrom][comp] = pandas.read_table(os.path.join(output_dir, f))
 
     xpclr_raw = temp

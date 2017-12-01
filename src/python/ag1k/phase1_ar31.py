@@ -70,5 +70,3 @@ def init(release_dir):
         )
         lkp_haplotypes = tbl_haplotypes.recordlookupone('label')
         df_haplotypes = pandas.read_csv(haplotypes_fn, sep='\t', index_col='index')
-    else:
-        print(haplotypes_fn, "not found")

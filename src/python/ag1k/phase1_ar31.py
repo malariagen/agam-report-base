@@ -52,9 +52,9 @@ def init(release_dir):
         callset_phased = h5py.File(callset_phased_h5_fn, mode='r')
 
     # prefer Zarr if available
-    ## N.B., the Zarr data is not consistent with HDF5 or shapeit outputs,
+    # N.B., the Zarr data is not consistent with HDF5 or shapeit outputs,
     # it is based on a previous phasing run.
-    # 
+    #
     #callset_phased_zarr_fn = os.path.join(haplotypes_dir, 'main', 'zarr2',
     #                                      'ag1000g.phase1.ar3.1.haplotypes')
     #if os.path.exists(callset_phased_zarr_fn):

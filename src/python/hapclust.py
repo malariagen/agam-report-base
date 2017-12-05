@@ -344,13 +344,14 @@ def _graph_edges(graph,
 
                 if sep > 1 and intermediate_nodes:
 
-                    # tricky case, need to add some anonymous nodes to represent intermediate steps
+                    # tricky case, need to add some anonymous nodes to represent
+                    # intermediate steps
 
                     # handle variant labels
                     if variant_labels is not None:
                         idx_diff = np.nonzero(h_distinct[:, i] != h_distinct[:, j])[0]
                         labels = variant_labels[idx_diff]
-                        reverse = h_distinct[idx_diff, i] == 1
+                        reverse = h_distinct[idx_diff, i] > h_distinct[idx_diff, j]
                     else:
                         labels = [''] * sep
 
@@ -373,8 +374,10 @@ def _graph_edges(graph,
 
                     # add further intermediate nodes as necessary
                     for k in range(1, sep-1):
-                        edge_from, edge_to = 'anon_{}_{}_{}'.format(i, j, k-1), 'anon_{}_{}_{}'.format(i, j, k)
-                        graph.node(edge_to, label='', width=str(anon_width), **anon_node_attrs)
+                        edge_from, edge_to = ('anon_{}_{}_{}'.format(i, j, k-1),
+                                              'anon_{}_{}_{}'.format(i, j, k))
+                        graph.node(edge_to, label='', width=str(anon_width),
+                                   **anon_node_attrs)
                         el = edge_length + anon_width
                         kwargs = {'len': str(el), 'label': labels[k]}
                         kwargs.update(edge_attrs)
@@ -403,7 +406,8 @@ def _graph_edges(graph,
 
                     # simple case, direct edge from node i to j
 
-                    # N.B., adjust edge length so we measure distance from edge of circle rather than center
+                    # N.B., adjust edge length so we measure distance from edge of
+                    # circle rather than center
                     el = (edge_length * sep) + width_i / 2 + width_j / 2
                     kwargs = {'len': str(el)}
                     kwargs.update(edge_attrs)
@@ -416,7 +420,9 @@ def _graph_edges(graph,
                             # this will be a directed edge
                             del kwargs['dir']
                             kwargs.setdefault('arrowsize', '0.5')
-                            if h_distinct[idx_diff, i] == 1:
+                            allele_i = h_distinct[idx_diff, i]
+                            allele_j = h_distinct[idx_diff, j]
+                            if allele_i > allele_j:
                                 # reverse direction of edge
                                 edge_from, edge_to = edge_to, edge_from
                     else:
@@ -488,6 +494,7 @@ def graph_haplotype_network(h,
                             variant_labels=None,
                             debug=False,
                             debug_out=None,
+                            max_allele=3,
                             ):
     """TODO doc me"""
 
@@ -554,7 +561,9 @@ def graph_haplotype_network(h,
     elif network_method.lower() == 'msn':
 
         # compute network
-        edges, alternate_edges = minimum_spanning_network(dist, max_dist=max_dist, debug=debug,
+        edges, alternate_edges = minimum_spanning_network(dist,
+                                                          max_dist=max_dist,
+                                                          debug=debug,
                                                           debug_out=debug_out)
         edges = np.triu(edges)
         alternate_edges = np.triu(alternate_edges)
@@ -562,7 +571,11 @@ def graph_haplotype_network(h,
     elif network_method.lower() == 'mjn':
 
         # compute network - N.B., MJN may add new haplotypes
-        h_distinct, edges, alternate_edges = median_joining_network(h_distinct, max_dist=max_dist, debug=debug)
+        h_distinct, edges, alternate_edges = median_joining_network(h_distinct,
+                                                                    max_dist=max_dist,
+                                                                    debug=debug,
+                                                                    debug_out=debug_out,
+                                                                    max_allele=max_allele)
         edges = np.triu(edges)
         alternate_edges = np.triu(alternate_edges)
 
@@ -750,7 +763,8 @@ def minimum_spanning_network(dist, max_dist=None, debug=False, debug_out=None):
             # check to see if both nodes already in the same cluster
             if a != b:
 
-                # nodes are in different clusters, so we can merge (i.e., connect) the clusters
+                # nodes are in different clusters, so we can merge (i.e., connect) the
+                # clusters
 
                 log('[%s]' % step, 'assign an edge')
                 edges[i, j] = dist[i, j]
@@ -767,9 +781,10 @@ def minimum_spanning_network(dist, max_dist=None, debug=False, debug_out=None):
 
             elif tuple(sorted([pa, pb])) in merged or step == 1:
 
-                # the two clusters have already been merged at this level, this is an alternate
-                # connection
-                # N.B., special case step = 1 because no previous cluster assignments (TODO really?)
+                # the two clusters have already been merged at this level, this is an
+                # alternate connection
+                # N.B., special case step = 1 because no previous cluster assignments
+                # (TODO really?)
 
                 log('[%s]' % step, 'assign an alternate edge')
                 alternate_edges[i, j] = dist[i, j]
@@ -813,7 +828,7 @@ def _remove_obsolete(h, orig_n_haplotypes, max_dist, log):
     return h, edges, alt_edges
 
 
-def median_joining_network(h, max_dist=None, debug=False, debug_out=None):
+def median_joining_network(h, max_dist=None, debug=False, debug_out=None, max_allele=3):
     """TODO doc me"""
 
     if debug:
@@ -829,7 +844,8 @@ def median_joining_network(h, max_dist=None, debug=False, debug_out=None):
     while n_medians_added is None or n_medians_added > 0:
 
         # steps 1-3
-        h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist, log=log)
+        h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist,
+                                               log=log)
         all_edges = edges + alt_edges
 
         # step 4 - add median vectors
@@ -845,7 +861,7 @@ def median_joining_network(h, max_dist=None, debug=False, debug_out=None):
                         if all_edges[i, k] or all_edges[j, k]:
                             log(iteration, i, j, k, 'computing median vector')
                             uvw = h[:, [i, j, k]]
-                            ac = uvw.count_alleles(max_allele=1)
+                            ac = uvw.count_alleles(max_allele=max_allele)
                             # majority consensus haplotype
                             x = np.argmax(ac, axis=1).astype('i1')
                             x_hash = hash(x.tobytes())
@@ -861,12 +877,14 @@ def median_joining_network(h, max_dist=None, debug=False, debug_out=None):
         n_medians_added = len(new_haps)
         log(new_haps)
         if n_medians_added:
-            h = h.concatenate(allel.HaplotypeArray(np.array(new_haps, dtype='i1').T), axis=1)
+            h = h.concatenate(allel.HaplotypeArray(np.array(new_haps, dtype='i1').T),
+                              axis=1)
 
         iteration += 1
 
     # final pass
-    h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist, log=log)
+    h, edges, alt_edges = _remove_obsolete(h, orig_n_haplotypes, max_dist=max_dist,
+                                           log=log)
     return h, edges, alt_edges
 
 

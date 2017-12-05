@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, print_function, division
 import os
+import itertools
 
 
 import pyfasta
@@ -9,27 +10,28 @@ import petl as etl
 import h5py
 import pandas
 import zarr
+import seaborn as sns
 
 
 title = 'Phase 2 AR1 release'
 
 pop_ids = (
     'AOcol',
-    'BFcol',
     'GHcol',
+    'BFcol',
     'CIcol',
     'GNcol',
     'GW',
     'GM',
-    'GNgam',
-    'BFgam',
-    'GHgam',
     'CMgam',
-    'UGgam',
+    'GHgam',
+    'BFgam',
+    'GNgam',
     'GAgam',
+    'UGgam',
     'GQgam',
     'FRgam',
-    'KE',
+    'KE'
 )
 
 pop_labels = {
@@ -52,7 +54,30 @@ pop_labels = {
     'colony': 'colony',
 }
 
-# TODO pop_colors
+reds = sns.color_palette('Reds', 5)
+blues = sns.color_palette('Blues', 4)
+greens = sns.color_palette('Greens', 2)
+browns = sns.color_palette('YlOrBr', 4)
+purples = sns.color_palette('Purples', 2)
+greys = sns.color_palette('Greys', 3)
+pop_colors = {
+    'AOcol': reds[4],
+    'GHcol': reds[3],
+    'BFcol': reds[2],
+    'CIcol': reds[1],
+    'GNcol': reds[0],
+    'CMgam': blues[3],
+    'GHgam': blues[2],
+    'BFgam': blues[1],
+    'GNgam': blues[0],
+    'GW': browns[1],
+    'GM': browns[2],
+    'GAgam': greens[1],
+    'UGgam': greens[0],
+    'FRgam': purples[1],
+    'GQgam': purples[0],
+    'KE': greys[1],
+}
 
 
 # noinspection PyGlobalUndefined
@@ -73,7 +98,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # reference sequence
     ####################
 
-    global genome_agamp3, genome_agamp4
+    global genome_agamp3, genome_agamp4, genome_dir
     genome_dir = os.path.join(release_dir, 'genome')
     genome_agamp3_dir = os.path.join(genome_dir, 'agamP3')
     genome_agamp3_fn = os.path.join(genome_agamp3_dir, 'Anopheles-gambiae-PEST_CHROMOSOMES_AgamP3.fa')
@@ -87,7 +112,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # genome annotations
     ####################
 
-    global geneset_agamp44_fn, geneset_agamp44
+    global geneset_agamp44_fn, geneset_agamp44, geneset_dir
     geneset_dir = os.path.join(release_dir, 'geneset')
     geneset_agamp44_fn = os.path.join(geneset_dir, 'Anopheles-gambiae-PEST_BASEFEATURES_AgamP4.4.sorted.gff3.gz')
     if load_geneset:
@@ -98,7 +123,8 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # variant callsets
     ##################
 
-    global callset, callset_pass, callset_pass_biallelic
+    global callset, callset_pass, callset_pass_biallelic, variation_dir, \
+        callset_snpeff_agamp42
     variation_dir = os.path.join(release_dir, 'variation')
 
     # main callset
@@ -140,10 +166,22 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     elif os.path.exists(callset_pass_biallelic_lite_h5_fn):
         callset_pass_biallelic = h5py.File(callset_pass_biallelic_lite_h5_fn, mode='r')
 
+    # SNPEFF annotations
+    callset_snpeff_agamp42_h5_fn_template = os.path.join(
+        variation_dir, 'main', 'hdf5', 'all_snpeff',
+        'ag1000g.phase2.ar1.snpeff.AgamP4.2.{chrom}.h5'
+    )
+    # work around broken link file
+    callset_snpeff_agamp42 = {
+        chrom: h5py.File(callset_snpeff_agamp42_h5_fn_template.format(chrom=chrom),
+                         mode='r')[chrom]
+        for chrom in ['2L', '2R', '3L', '3R', 'X']
+    }
+
     # accessibility
     ###############
 
-    global accessibility
+    global accessibility, accessibility_dir
     accessibility_dir = os.path.join(release_dir, 'accessibility')
     accessibility_fn = os.path.join(accessibility_dir, 'accessibility.h5')
     if os.path.exists(accessibility_fn):
@@ -152,7 +190,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # sample metadata
     #################
 
-    global tbl_samples, lkp_samples, sample_ids, df_samples
+    global tbl_samples, lkp_samples, sample_ids, df_samples, samples_dir
     samples_dir = os.path.join(release_dir, 'samples')
     samples_fn = os.path.join(samples_dir, 'samples.meta.txt')
     if os.path.exists(samples_fn):
@@ -176,3 +214,34 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     allele_counts_fn = os.path.join(extras_dir, 'allele_counts.h5')
     if os.path.exists(allele_counts_fn):
         allele_counts = h5py.File(allele_counts_fn, mode='r')
+
+    # haplotypes
+    ############
+
+    global haplotypes_dir, callset_phased, tbl_haplotypes, df_haplotypes, lkp_haplotypes
+    haplotypes_dir = os.path.join(release_dir, 'haplotypes')
+
+    # no HDF5 link file, load up as dict for now
+    callset_phased_hdf5_fn_template = os.path.join(haplotypes_dir, 'main', 'hdf5',
+                                                   'ag1000g.phase2.ar1.haplotypes.{chrom}.h5')
+    callset_phased = {
+        chrom: h5py.File(callset_phased_hdf5_fn_template.format(chrom=chrom), mode='r')[chrom]
+        for chrom in ['2L', '2R', '3L', '3R', 'X']
+    }
+
+    # no haplotypes file, create here for now
+    phased_samples = callset_phased['3R']['samples'][:].astype('U')
+    haplotype_labels = list(itertools.chain(*[[s + 'a', s + 'b'] for s in phased_samples]))
+    tbl_haplotypes = (
+        etl
+        .empty()
+        .addcolumn('label', haplotype_labels)
+        .addrownumbers(start=0)
+        .rename('row', 'index')
+        .addfield('ox_code', lambda row: row.label[:-1])
+        .hashleftjoin(tbl_samples, key='ox_code')
+        .addfield('label_aug', lambda row: '%s [%s, %s, %s, %s]' % (row.label, row.country, row.region, row.m_s, row.sex))
+    )
+    lkp_haplotypes = tbl_haplotypes.recordlookupone('label')
+    df_haplotypes = tbl_haplotypes.todataframe(index='index')
+

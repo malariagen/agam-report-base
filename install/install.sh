@@ -1,20 +1,61 @@
 #!/bin/bash
 
+
 # N.B., assume this will be executed from the root directory of a report repo.
 
+
 # ensure script errors if any command fails
-set -eo pipefail
+set -xe
+
+
+# conda setup
+CONDADIR=conda
+CONDANAME=${PWD##*/}
 
 # descend into dependencies directory
-mkdir -pv dependencies
-cd dependencies
+DEPSDIR=deps
+mkdir -pv $DEPSDIR
+cd $DEPSDIR
+
 
 # put dependencies on the path
 export PATH=./texlive/bin/x86_64-linux:$PATH
-export PATH=./miniconda/bin:$PATH
+export PATH=./${CONDADIR}/bin:$PATH
 
-#TEXREPO=ftp://tug.org/historic/systems/texlive/2016/tlnet-final
+
+# use a snapshot mirror to get reproducible install
 TEXREPO=https://ctanmirror.speedata.de/2017-09-01/systems/texlive/tlnet
+
+
+# install miniconda
+if [ ! -f miniconda.installed ]; then
+    echo "[install] installing miniconda"
+
+    # clean up any previous
+    rm -rf $CONDADIR
+
+    # download miniconda
+    wget --no-clobber https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
+
+    # install miniconda
+    bash Miniconda3-latest-Linux-x86_64.sh -b -p $CONDADIR
+
+    # set conda channels
+    conda config --add channels defaults
+    conda config --add channels bioconda
+    conda config --add channels conda-forge
+    conda update --yes conda
+
+    # create default scientific Python environment
+    conda create --yes --name=$CONDANAME python=3.6
+
+    # mark success
+    touch miniconda.installed
+
+else
+    echo "[install] skipping miniconda installation"
+fi
+
 
 # install texlive
 if [ ! -f texlive.installed ]; then
@@ -37,25 +78,6 @@ if [ ! -f texlive.installed ]; then
         -no-persistent-downloads \
         -no-verify-downloads
 
-    # install additional packages
-    tlmgr option repository $TEXREPO
-    tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
-    $tlmgr_install csquotes
-    $tlmgr_install biblatex
-    $tlmgr_install logreq
-    $tlmgr_install xstring
-    $tlmgr_install adjustbox
-    $tlmgr_install collectbox
-    $tlmgr_install todonotes
-    $tlmgr_install siunitx
-    $tlmgr_install tablefootnote
-    $tlmgr_install xifthen
-    $tlmgr_install ifmtarg
-    $tlmgr_install preprint
-    $tlmgr_install biber
-    $tlmgr_install threeparttable
-    $tlmgr_install ec
-
     # mark successful installation
     touch texlive.installed
 
@@ -63,39 +85,28 @@ else
     echo "[install] skipping texlive installation"
 fi
 
-# install miniconda
-if [ ! -f miniconda.installed ]; then
-    echo "[install] installing miniconda"
 
-    # clean up any previous
-    rm -rf miniconda
+echo "[install] installing Python packages"
+source activate $CONDANAME
+# ensure conda channels
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+# conda install
+conda install --yes --file ../agam-report-base/install/conda.txt
+# pypi install
+pip install --no-cache-dir -r ../agam-report-base/install/pypi.txt
+# clean conda caches
+conda clean --yes --all
 
-    # download miniconda
-    wget --no-clobber https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
 
-    # install miniconda
-    bash Miniconda3-latest-Linux-x86_64.sh -b -p miniconda
-    conda upgrade --yes conda
+echo "[install] installing additional texlive packages"
+tlmgr option repository $TEXREPO
+tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
+for package in $(cat ../agam-report-base/install/texlive.packages); do
+    $tlmgr_install $package
+done
 
-    # create default scientific Python environment
-    conda config --add channels bioconda
-    conda config --add channels conda-forge
-    conda create --yes --name=agam-report-base python=3.5
-
-    # install Python packages
-    source activate agam-report-base
-    conda install --yes --file ../agam-report-base/install/conda.txt
-    pip install --no-cache-dir -r ../agam-report-base/install/pypi.txt
-
-    # clean conda caches
-    conda clean --yes --all
-
-    # mark success
-    touch miniconda.installed
-
-else
-    echo "[install] skipping miniconda installation"
-fi
 
 # check to see how much space needed for cache
 du -hs ./*

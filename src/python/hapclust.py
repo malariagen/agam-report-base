@@ -495,6 +495,8 @@ def graph_haplotype_network(h,
                             debug=False,
                             debug_out=None,
                             max_allele=3,
+                            return_components=False,
+                            show_singletons=True,
                             ):
     """TODO doc me"""
 
@@ -614,6 +616,9 @@ def graph_haplotype_network(h,
             # original haplotype
 
             n = hap_counts[i]
+            connected = np.any((edges[i] > 0) | (edges[:, i] > 0))
+            if not show_singletons and n == 1 and not connected:
+                continue
 
             # calculate width from number of items - make width proportional to area
             width = np.sqrt(n * node_size_factor)
@@ -705,7 +710,13 @@ def graph_haplotype_network(h,
                      h_distinct,
                      variant_labels)
 
-    return graph, hap_counts
+    if return_components:
+        from scipy.sparse.csgraph import connected_components
+        n_components, component_labels = connected_components(edges)
+        return graph, h_distinct_sets, component_labels
+
+    else:
+        return graph, hap_counts
 
 
 def minimum_spanning_network(dist, max_dist=None, debug=False, debug_out=None):

@@ -172,11 +172,11 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
         'ag1000g.phase2.ar1.snpeff.AgamP4.2.{chrom}.h5'
     )
     # work around broken link file
-    callset_snpeff_agamp42 = {
-        chrom: h5py.File(callset_snpeff_agamp42_h5_fn_template.format(chrom=chrom),
-                         mode='r')[chrom]
-        for chrom in ['2L', '2R', '3L', '3R', 'X']
-    }
+    callset_snpeff_agamp42 = dict()
+    for chrom in '2L', '2R', '3L', '3R', 'X':
+        fn = callset_snpeff_agamp42_h5_fn_template.format(chrom=chrom)
+        if os.path.exists(fn):
+            callset_snpeff_agamp42[chrom] = h5py.File(fn, mode='r')[chrom]
 
     # accessibility
     ###############
@@ -224,24 +224,27 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # no HDF5 link file, load up as dict for now
     callset_phased_hdf5_fn_template = os.path.join(haplotypes_dir, 'main', 'hdf5',
                                                    'ag1000g.phase2.ar1.haplotypes.{chrom}.h5')
-    callset_phased = {
-        chrom: h5py.File(callset_phased_hdf5_fn_template.format(chrom=chrom), mode='r')[chrom]
-        for chrom in ['2L', '2R', '3L', '3R', 'X']
-    }
+    callset_phased = dict()
+    for chrom in '2L', '2R', '3L', '3R', 'X':
+        fn = callset_phased_hdf5_fn_template.format(chrom=chrom)
+        if os.path.exists(fn):
+            callset_phased[chrom] = h5py.File(fn, mode='r')[chrom]
 
     # no haplotypes file, create here for now
-    phased_samples = callset_phased['3R']['samples'][:].astype('U')
-    haplotype_labels = list(itertools.chain(*[[s + 'a', s + 'b'] for s in phased_samples]))
-    tbl_haplotypes = (
-        etl
-        .empty()
-        .addcolumn('label', haplotype_labels)
-        .addrownumbers(start=0)
-        .rename('row', 'index')
-        .addfield('ox_code', lambda row: row.label[:-1])
-        .hashleftjoin(tbl_samples, key='ox_code')
-        .addfield('label_aug', lambda row: '%s [%s, %s, %s, %s]' % (row.label, row.country, row.region, row.m_s, row.sex))
-    )
-    lkp_haplotypes = tbl_haplotypes.recordlookupone('label')
-    df_haplotypes = tbl_haplotypes.todataframe(index='index')
+    # TODO source this from file Nick has created
+    if '3R' in callset_phased:
+        phased_samples = callset_phased['3R']['samples'][:].astype('U')
+        haplotype_labels = list(itertools.chain(*[[s + 'a', s + 'b'] for s in phased_samples]))
+        tbl_haplotypes = (
+            etl
+            .empty()
+            .addcolumn('label', haplotype_labels)
+            .addrownumbers(start=0)
+            .rename('row', 'index')
+            .addfield('ox_code', lambda row: row.label[:-1])
+            .hashleftjoin(tbl_samples, key='ox_code')
+            .addfield('label_aug', lambda row: '%s [%s, %s, %s, %s]' % (row.label, row.country, row.region, row.m_s, row.sex))
+        )
+        lkp_haplotypes = tbl_haplotypes.recordlookupone('label')
+        df_haplotypes = tbl_haplotypes.todataframe(index='index')
 

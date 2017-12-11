@@ -35,7 +35,7 @@ def init(release_dir):
         fn = os.path.join(ws_dir, '{metric}.txt.gz').format(metric=metric)
 
         if os.path.exists(fn):
-            exec("{metric}_windowed=pandas.read_table('{path}').set_index(['chrom', 'start', 'stop'])".format(metric=metric, path=fn), globals())
+            globals()[metric + "_windowed"] = pandas.read_table(fn).set_index(['chrom', 'start', 'stop'])
 
     # raw data 
     ##########
@@ -51,7 +51,7 @@ def init(release_dir):
             fn = os.path.join(raw_dir, '{metric}/output.zarr').format(metric=metric)
 
         if os.path.exists(fn):
-            exec("{metric}_raw=zarr.open_group('{path}', 'r')".format(metric=metric, path=fn), globals())
+            globals()[metric + "_raw"] = zarr.open_group(fn, 'r')
 
     # XPCLR has no zarr output.
     output_dir = os.path.join(raw_dir, 'xpclr', 'output')

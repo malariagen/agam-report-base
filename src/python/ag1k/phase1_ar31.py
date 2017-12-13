@@ -51,6 +51,7 @@ def init(release_dir):
     if os.path.exists(callset_phased_h5_fn):
         callset_phased = h5py.File(callset_phased_h5_fn, mode='r')
 
+    # prefer Zarr if available
     # N.B., the Zarr data is not consistent with HDF5 or shapeit outputs,
     # it is based on a previous phasing run.
     #

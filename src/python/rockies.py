@@ -5,6 +5,7 @@ import collections
 
 
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import lmfit
 import seaborn as sns
@@ -106,9 +107,12 @@ def plot_signal(df, col, chrom, recmap, spacing=20000, start=None, stop=None,
         fig, ax = plt.subplots(figsize=figsize)
 
     ax.plot(x, signal, linestyle=' ', marker='o', mfc='none', markersize=3,
-            color=palette[0])
+            color=palette[0], mew=1)
     ax.set_title(col)
-    ax.set_xlabel('Chromosome {} ({} distance)'.format(chrom, distance))
+    if distance == 'genetic':
+        ax.set_xlabel('Chromosome {} genetic distance (cM)'.format(chrom))
+    else:
+        ax.set_xlabel('Chromosome {} physical distance (bp)'.format(chrom))
     if fig is not None:
         fig.tight_layout()
     return ax
@@ -170,7 +174,7 @@ def symmetric_exponential_peak(x, center, amplitude, decay, c, cap):
     """
 
     # locate the center
-    ix_cen = bisect_left(x, center)
+    ix_cen = bisect_right(x, center)
 
     # compute left flank
     xl = center - x[:ix_cen]
@@ -217,7 +221,7 @@ def asymmetric_exponential_peak(x, center, amplitude, left_decay, right_decay,
     """
 
     # locate the center
-    ix_cen = bisect_left(x, center)
+    ix_cen = bisect_right(x, center)
 
     # compute left flank
     xl = center - x[:ix_cen]
@@ -238,8 +242,8 @@ def asymmetric_exponential_peak(x, center, amplitude, left_decay, right_decay,
 
 FitResult = collections.namedtuple(
     'FitResult',
-    'delta_aic peak_result null_result loc xx yy best_fit peak residual '
-    'peak_start_ix peak_stop_ix peak_start_x peak_stop_x baseline '
+    'delta_aic min_delta_aic peak_result null_result loc xx yy best_fit peak '
+    'residual peak_start_ix peak_stop_ix peak_start_x peak_stop_x baseline '
     'baseline_stderr'
 )
 
@@ -299,9 +303,10 @@ class PeakFitter(object):
             peak_start_x = xx[rix_peak_start]
             peak_stop_x = xx[rix_peak_stop]
 
-        return FitResult(delta_aic, peak_result, null_result, loc, xx, yy,
-                         best_fit, peak, residual, peak_start_ix, peak_stop_ix,
-                         peak_start_x, peak_stop_x, baseline, baseline_stderr)
+        return FitResult(delta_aic, delta_aic, peak_result, null_result, loc,
+                         xx, yy, best_fit, peak, residual, peak_start_ix,
+                         peak_stop_ix, peak_start_x, peak_stop_x, baseline,
+                         baseline_stderr)
 
 
 class GaussianPeakFitter(PeakFitter):
@@ -458,7 +463,8 @@ class PairExponentialPeakFitter(PeakFitter):
             # obtain difference in AIC
             delta_aic_l = null_result_l.aic - peak_result_l.aic
             delta_aic_r = null_result_r.aic - peak_result_r.aic
-            delta_aic = min([delta_aic_l, delta_aic_r])
+            delta_aic = delta_aic_l, delta_aic_r
+            min_delta_aic = min(delta_aic)
 
             # determine baseline
             baseline_l = peak_result_l.params['c'].value
@@ -477,9 +483,8 @@ class PairExponentialPeakFitter(PeakFitter):
             residual_r = yr - peak_r
 
             # prepare output
-            min_result_ix = np.argmin([delta_aic_l, delta_aic_r])
-            peak_result = [peak_result_l, peak_result_r][min_result_ix]
-            null_result = [null_result_l, null_result_r][min_result_ix]
+            peak_result = peak_result_l, peak_result_r
+            null_result = null_result_l, null_result_r
             best_fit = np.concatenate([best_fit_l, best_fit_r])
             peak = np.concatenate([peak_l, peak_r])
             residual = np.concatenate([residual_l, residual_r])
@@ -495,18 +500,18 @@ class PairExponentialPeakFitter(PeakFitter):
                 peak_stop_x = xx[rix_peak_stop]
 
         else:
-            delta_aic = peak_result = null_result = best_fit = peak = \
-                residual = peak_start_ix = peak_stop_ix = peak_start_x = \
-                peak_stop_x = baseline = baseline_stderr = None
+            delta_aic = min_delta_aic = peak_result = null_result = best_fit = \
+                peak = residual = peak_start_ix = peak_stop_ix = \
+                peak_start_x = peak_stop_x = baseline = baseline_stderr = None
 
-        return FitResult(delta_aic, peak_result, null_result, loc, xx, yy,
-                         best_fit, peak, residual, peak_start_ix,
+        return FitResult(delta_aic, min_delta_aic, peak_result, null_result,
+                         loc, xx, yy, best_fit, peak, residual, peak_start_ix,
                          peak_stop_ix, peak_start_x, peak_stop_x, baseline,
                          baseline_stderr)
 
 
 def plot_peak(fit, figsize=(12, 3.5)):
-    fig, axs = plt.subplots(nrows=1, ncols=3, figsize=figsize)
+    fig, axs = plt.subplots(nrows=1, ncols=3, figsize=figsize, facecolor='w')
 
     ax = axs[0]
     # plot width of the peak
@@ -522,11 +527,17 @@ def plot_peak(fit, figsize=(12, 3.5)):
     # plot the data
     ax.plot(fit.xx, fit.yy, marker='o', linestyle=' ', markersize=3,
             mfc='none', color=palette[0], mew=1)
-    ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic,
-            transform=ax.transAxes, ha='left', va='top')
-    ax.set_title('Best Fit')
+    if isinstance(fit.delta_aic, (list, tuple)):
+        ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic[0],
+                transform=ax.transAxes, ha='left', va='top')
+        ax.text(.98, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic[1],
+                transform=ax.transAxes, ha='right', va='top')
+    else:
+        ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic,
+                transform=ax.transAxes, ha='left', va='top')
+    ax.set_title('Fit')
     ax.set_ylabel('Selection statistic')
-    ax.set_xlabel('Genetic distance (relative to center)')
+    ax.set_xlabel('Genetic distance (cM)')
     ax.set_ylim(bottom=0)
 
     ax = axs[1]
@@ -537,7 +548,7 @@ def plot_peak(fit, figsize=(12, 3.5)):
     ax.set_ylim(axs[0].get_ylim())
     ax.set_title('Residual')
     ax.set_ylabel('Selection statistic')
-    ax.set_xlabel('Genetic distance (relative to center)')
+    ax.set_xlabel('Genetic distance (cM)')
     ax.set_ylim(bottom=0)
 
     ax = axs[2]
@@ -582,8 +593,8 @@ def scan_fit(x, y, flank, fitter, centers, delta_aics, fits,
 
         # store the results
         fits[i] = fit
-        if fit.delta_aic is not None:
-            delta_aics[i] = fit.delta_aic
+        if fit.min_delta_aic is not None:
+            delta_aics[i] = fit.min_delta_aic
 
 
 def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
@@ -635,24 +646,27 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             print('Iteration', iteration)
             print('Peak index:', best_ix)
             print('Delta AIC:', best_delta_aic)
-            print('Window:', window_starts[best_ix],
-                  window_stops[best_ix])
-            print(best_fit.peak_result.fit_report())
-            print(best_fit.null_result.fit_report())
+            print('Window:', window_starts[best_ix], window_stops[best_ix])
             print('*' * 80)
 
             # plot landscape of delta AIC
             # noinspection PyTypeChecker
             fig, axs = plt.subplots(nrows=2, figsize=(12, 4), sharex=True)
+
             ax = axs[0]
             ax.set_ylim(bottom=0)
-            ax.plot(x, y, marker='o', linestyle=' ', markersize=2, mfc='none')
+            ax.plot(x, y, marker='o', linestyle=' ', markersize=2,
+                    mfc='none', mew=1)
+            ax.set_ylabel('Selection statistic')
+
             ax = axs[1]
             ax.plot(gpos, delta_aics, lw=1)
-            ax.axvline(gpos[best_ix], color='k', linestyle='--', lw=2)
+            # ax.axvline(gpos[best_ix], color='k', linestyle='--', lw=2)
+            ax.text(gpos[best_ix], best_delta_aic, 'v', va='bottom',
+                    ha='center')
             ax.set_ylim(bottom=0)
             ax.set_ylabel(r'$\Delta_{i}$')
-            ax.set_xlabel('Position')
+            ax.set_xlabel('Genetic position (cM)')
 
             # plot the best peak fit
             plot_peak(best_fit)
@@ -660,11 +674,13 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
 
         log('find extent of region under selection')
         hit_start = window_starts[best_ix]
-        hit_stop = window_stops[best_ix]
+        # N.B., center is included in left flank, so we'll include the next
+        # window along within the hit
+        hit_stop = window_stops[best_ix+1]
         # search left
         i = best_ix - 1
         while 0 <= i < n:
-            if best_delta_aic - fits[i].delta_aic < extend_delta_aic:
+            if best_delta_aic - fits[i].min_delta_aic < extend_delta_aic:
                 if debug:
                     print('extend hit left', fits[i].delta_aic)
                 hit_start = window_starts[i]
@@ -674,9 +690,9 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         # search right
         i = best_ix + 1
         while 0 <= i < n:
-            if best_delta_aic - fits[i].delta_aic < extend_delta_aic:
+            if best_delta_aic - fits[i].min_delta_aic < extend_delta_aic:
                 log('extend hit right', fits[i].delta_aic)
-                hit_stop = window_stops[i]
+                hit_stop = window_stops[i+1]
                 i += 1
             else:
                 break
@@ -690,46 +706,24 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             peak_stop = stops_nomiss[best_fit.peak_stop_ix]
 
         if debug:
-            fig, ax = plt.subplots(figsize=(12, 5))
-            # plot region under peak
-            if (best_fit.peak_start_ix is not None and
-                    best_fit.peak_stop_ix is not None):
-                ax.axvspan(starts_nomiss[best_fit.peak_start_ix],
-                           hit_start, color=palette[0], alpha=.2)
-                ax.axvspan(hit_stop,
-                           stops_nomiss[best_fit.peak_stop_ix],
-                           color=palette[0], alpha=.2)
-            # plot hit region
-            ax.axvspan(hit_start, hit_stop, color=palette[3], alpha=.5)
-            # plot best window
-            ax.axvspan(window_starts[best_ix], window_stops[best_ix],
-                       color=palette[3], alpha=1)
-            # plot fit
-            ax.plot(ppos_nomiss[best_fit.loc], best_fit.best_fit,
-                    linestyle='--', color='k', lw=1)
-            # # plot the baseline
-            # if best_fit.baseline is not None:
-            #     ax.axhline(best_fit.baseline, lw=1, linestyle='--', color='k')
-            # plot data
-            ax.plot(ppos_nomiss[best_fit.loc], best_fit.yy, marker='o',
-                    linestyle=' ', color=palette[0], mew=1, mfc='none',
-                    markersize=3)
-            ax.set_xlabel('Physical position')
-            ax.set_ylabel('Selection statistic')
+            plot_hit(best_ix=best_ix, best_fit=best_fit, hit_start=hit_start,
+                     hit_stop=hit_stop, window_starts=window_starts,
+                     window_stops=window_stops, starts_nomiss=starts_nomiss,
+                     stops_nomiss=stops_nomiss, ppos_nomiss=ppos_nomiss)
             plt.show()
 
         # filter out hits with too much parameter uncertainty
-        params_check = True
-        for k in best_fit.peak_result.params:
-            p = best_fit.peak_result.params[k]
-            if (p.stderr / p.value) > max_param_stderr:
-                params_check = False
-                log('failed param check: ', p)
-
-        if params_check:
-            yield (best_fit, best_delta_aic, best_ix,
-                   window_starts[best_ix], window_stops[best_ix],
-                   hit_start, hit_stop, peak_start, peak_stop)
+        # params_check = True
+        # for k in best_fit.peak_result.params:
+        #     p = best_fit.peak_result.params[k]
+        #     if (p.stderr / p.value) > max_param_stderr:
+        #         params_check = False
+        #         log('failed param check: ', p)
+        #
+        # if params_check:
+        yield (best_fit, best_delta_aic, best_ix,
+               window_starts[best_ix], window_stops[best_ix+1],
+               hit_start, hit_stop, peak_start, peak_stop)
 
         # subtract peak from signal
         y[best_fit.loc] -= best_fit.peak
@@ -750,3 +744,40 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         best_delta_aic = delta_aics[best_ix]
 
         iteration += 1
+
+
+def plot_hit(best_ix, best_fit, hit_start, hit_stop, window_starts,
+             window_stops, starts_nomiss, stops_nomiss, ppos_nomiss,
+             figsize=(12, 5)):
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # plot region under peak
+    if (best_fit.peak_start_ix is not None and
+            best_fit.peak_stop_ix is not None):
+        ax.axvspan(starts_nomiss[best_fit.peak_start_ix],
+                   hit_start, color=palette[0], alpha=.2)
+        ax.axvspan(hit_stop,
+                   stops_nomiss[best_fit.peak_stop_ix],
+                   color=palette[0], alpha=.2)
+
+    # plot hit region
+    ax.axvspan(hit_start, hit_stop, color=palette[3], alpha=.5)
+
+    # plot best window
+    ax.axvspan(window_starts[best_ix], window_stops[best_ix+1],
+               color=palette[3], alpha=1)
+
+    # plot fit
+    ax.plot(ppos_nomiss[best_fit.loc], best_fit.best_fit,
+            linestyle='--', color='k', lw=1)
+
+    # plot data
+    ax.plot(ppos_nomiss[best_fit.loc], best_fit.yy, marker='o',
+            linestyle=' ', color=palette[0], mew=1, mfc='none',
+            markersize=3)
+
+    # tidy up
+    ax.set_xlabel('Physical position')
+    ax.set_ylabel('Selection statistic')
+    ax.set_ylim(bottom=0)

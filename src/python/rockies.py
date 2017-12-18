@@ -2,6 +2,7 @@
 from __future__ import absolute_import, print_function, division
 from bisect import bisect_left, bisect_right
 import collections
+import os
 
 
 import numpy as np
@@ -510,58 +511,6 @@ class PairExponentialPeakFitter(PeakFitter):
                          baseline_stderr)
 
 
-def plot_peak(fit, figsize=(12, 3.5)):
-    fig, axs = plt.subplots(nrows=1, ncols=3, figsize=figsize, facecolor='w')
-
-    ax = axs[0]
-    # plot width of the peak
-    if fit.peak_start_x and fit.peak_stop_x:
-        ax.axvspan(fit.peak_start_x, fit.peak_stop_x, facecolor=palette[0],
-                   alpha=.2)
-    ax.axvline(0, color='k', lw=1, linestyle='--')
-    # plot the fit
-    ax.plot(fit.xx, fit.best_fit, lw=1, linestyle='--', color='k')
-    # # plot the baseline
-    # if fit.baseline is not None:
-    #     ax.axhline(fit.baseline, lw=1, linestyle='--', color='k')
-    # plot the data
-    ax.plot(fit.xx, fit.yy, marker='o', linestyle=' ', markersize=3,
-            mfc='none', color=palette[0], mew=1)
-    if isinstance(fit.delta_aic, (list, tuple)):
-        ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic[0],
-                transform=ax.transAxes, ha='left', va='top')
-        ax.text(.98, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic[1],
-                transform=ax.transAxes, ha='right', va='top')
-    else:
-        ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic,
-                transform=ax.transAxes, ha='left', va='top')
-    ax.set_title('Fit')
-    ax.set_ylabel('Selection statistic')
-    ax.set_xlabel('Genetic distance (cM)')
-    ax.set_ylim(bottom=0)
-
-    ax = axs[1]
-    ax.plot(fit.xx, fit.residual, marker='o', linestyle=' ', markersize=3,
-            mfc='none', color=palette[0], mew=1)
-    if fit.baseline is not None:
-        ax.axhline(fit.baseline, lw=1, linestyle='--', color='k')
-    ax.set_ylim(axs[0].get_ylim())
-    ax.set_title('Residual')
-    ax.set_ylabel('Selection statistic')
-    ax.set_xlabel('Genetic distance (cM)')
-    ax.set_ylim(bottom=0)
-
-    ax = axs[2]
-    ax.hist(fit.residual.clip(0, None), bins=30)
-    if fit.baseline is not None:
-        ax.axvline(fit.baseline, lw=1, linestyle='--', color='k')
-    ax.set_xlabel('Selection statistic')
-    ax.set_ylabel('Frequency')
-    ax.set_title('Residual')
-
-    fig.tight_layout()
-
-
 def scan_fit(x, y, flank, fitter, centers, delta_aics, fits,
              start_index=None, stop_index=None, debug=False):
 
@@ -599,7 +548,7 @@ def scan_fit(x, y, flank, fitter, centers, delta_aics, fits,
 
 def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
                min_delta_aic=50, max_iter=20, extend_delta_aic=10,
-               max_param_stderr=2, debug=False):
+               max_param_stderr=2, debug=False, output_dir=None):
     """TODO"""
 
     def log(*args):
@@ -630,8 +579,9 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
     scan_fit(x, y, flank=flank, fitter=fitter, centers=gpos,
              delta_aics=delta_aics, fits=fits, debug=debug)
 
-    # keep track of which iteration we're on
-    iteration = 0
+    # keep track of which iteration we're on, starting from 1 (be human
+    # friendly)
+    iteration = 1
 
     # find the first peak
     best_ix = np.argmax(delta_aics)
@@ -649,27 +599,13 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             print('Window:', window_starts[best_ix], window_stops[best_ix])
             print('*' * 80)
 
-            # plot landscape of delta AIC
-            # noinspection PyTypeChecker
-            fig, axs = plt.subplots(nrows=2, figsize=(12, 4), sharex=True)
+        if output_dir:
+            os.makedirs(os.path.join(output_dir, str(iteration)), exist_ok=True)
 
-            ax = axs[0]
-            ax.set_ylim(bottom=0)
-            ax.plot(x, y, marker='o', linestyle=' ', markersize=2,
-                    mfc='none', mew=1)
-            ax.set_ylabel('Selection statistic')
-
-            ax = axs[1]
-            ax.plot(gpos, delta_aics, lw=1)
-            # ax.axvline(gpos[best_ix], color='k', linestyle='--', lw=2)
-            ax.text(gpos[best_ix], best_delta_aic, 'v', va='bottom',
-                    ha='center')
-            ax.set_ylim(bottom=0)
-            ax.set_ylabel(r'$\Delta_{i}$')
-            ax.set_xlabel('Genetic position (cM)')
-
-            # plot the best peak fit
-            plot_peak(best_fit)
+            plot_signal_context(gpos=gpos, signal=signal, delta_aics=delta_aics,
+                                best_ix=best_ix, best_delta_aic=best_delta_aic,
+                                output_dir=output_dir, iteration=iteration)
+            plot_signal_fit(best_fit, output_dir=output_dir, iteration=iteration)
             plt.show()
 
         log('find extent of region under selection')
@@ -706,10 +642,11 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             peak_stop = stops_nomiss[best_fit.peak_stop_ix]
 
         if debug:
-            plot_hit(best_ix=best_ix, best_fit=best_fit, hit_start=hit_start,
-                     hit_stop=hit_stop, window_starts=window_starts,
-                     window_stops=window_stops, starts_nomiss=starts_nomiss,
-                     stops_nomiss=stops_nomiss, ppos_nomiss=ppos_nomiss)
+            plot_signal_location(best_ix=best_ix, best_fit=best_fit, hit_start=hit_start,
+                                 hit_stop=hit_stop, window_starts=window_starts,
+                                 window_stops=window_stops, starts_nomiss=starts_nomiss,
+                                 stops_nomiss=stops_nomiss, ppos_nomiss=ppos_nomiss,
+                                 iteration=iteration, output_dir=output_dir)
             plt.show()
 
         # filter out hits with too much parameter uncertainty
@@ -746,9 +683,66 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         iteration += 1
 
 
-def plot_hit(best_ix, best_fit, hit_start, hit_stop, window_starts,
-             window_stops, starts_nomiss, stops_nomiss, ppos_nomiss,
-             figsize=(12, 5)):
+def plot_signal_fit(fit, figsize=(12, 3.5), output_dir=None, iteration=None):
+    fig, axs = plt.subplots(nrows=1, ncols=3, figsize=figsize, facecolor='w')
+
+    ax = axs[0]
+    # plot width of the peak
+    if fit.peak_start_x and fit.peak_stop_x:
+        ax.axvspan(fit.peak_start_x, fit.peak_stop_x, facecolor=palette[0],
+                   alpha=.2)
+    # ax.axvline(0, color='k', lw=.5, linestyle='--')
+    # plot the fit
+    ax.plot(fit.xx, fit.best_fit, lw=.5, linestyle='--', color='k')
+    # # plot the baseline
+    # if fit.baseline is not None:
+    #     ax.axhline(fit.baseline, lw=1, linestyle='--', color='k')
+    # plot the data
+    ax.plot(fit.xx, fit.yy, marker='o', linestyle=' ', markersize=3,
+            mfc='none', color=palette[0], mew=.5)
+    if isinstance(fit.delta_aic, (list, tuple)):
+        ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic[0],
+                transform=ax.transAxes, ha='left', va='top')
+        ax.text(.98, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic[1],
+                transform=ax.transAxes, ha='right', va='top')
+    else:
+        ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic,
+                transform=ax.transAxes, ha='left', va='top')
+    ax.set_title('Fit')
+    ax.set_ylabel('Selection statistic')
+    ax.set_xlabel('Genetic distance (cM)')
+    ax.set_ylim(bottom=0)
+
+    ax = axs[1]
+    if fit.baseline is not None:
+        ax.axhline(fit.baseline, lw=.5, linestyle='--', color='k')
+    ax.plot(fit.xx, fit.residual, marker='o', linestyle=' ', markersize=3,
+            mfc='none', color=palette[0], mew=.5)
+    ax.set_ylim(axs[0].get_ylim())
+    ax.set_title('Residual')
+    ax.set_ylabel('Selection statistic')
+    ax.set_xlabel('Genetic distance (cM)')
+    ax.set_ylim(bottom=0)
+
+    ax = axs[2]
+    ax.hist(fit.residual.clip(0, None), bins=30)
+    if fit.baseline is not None:
+        ax.axvline(fit.baseline, lw=.5, linestyle='--', color='k')
+    ax.set_xlabel('Selection statistic')
+    ax.set_ylabel('Frequency')
+    ax.set_title('Residual')
+
+    fig.tight_layout()
+
+    if output_dir:
+        fig.savefig(os.path.join(output_dir, str(iteration),
+                                 'signal_fit.png'),
+                    bbox_inches='tight', dpi=150, facecolor='w')
+
+
+def plot_signal_location(best_ix, best_fit, hit_start, hit_stop, window_starts,
+                         window_stops, starts_nomiss, stops_nomiss, ppos_nomiss,
+                         output_dir, iteration, figsize=(12, 5)):
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -770,14 +764,46 @@ def plot_hit(best_ix, best_fit, hit_start, hit_stop, window_starts,
 
     # plot fit
     ax.plot(ppos_nomiss[best_fit.loc], best_fit.best_fit,
-            linestyle='--', color='k', lw=1)
+            linestyle='--', color='k', lw=.5)
 
     # plot data
     ax.plot(ppos_nomiss[best_fit.loc], best_fit.yy, marker='o',
-            linestyle=' ', color=palette[0], mew=1, mfc='none',
+            linestyle=' ', color=palette[0], mew=.5, mfc='none',
             markersize=3)
 
     # tidy up
     ax.set_xlabel('Physical position')
     ax.set_ylabel('Selection statistic')
     ax.set_ylim(bottom=0)
+    fig.tight_layout()
+
+    if output_dir:
+        fig.savefig(os.path.join(output_dir, str(iteration),
+                                 'signal_location.png'),
+                    bbox_inches='tight', dpi=150, facecolor='w')
+
+
+def plot_signal_context(gpos, signal, delta_aics, best_ix, best_delta_aic,
+                        output_dir, iteration):
+    # noinspection PyTypeChecker
+    fig, axs = plt.subplots(nrows=2, figsize=(12, 4), sharex=True)
+
+    ax = axs[0]
+    ax.set_ylim(bottom=0)
+    ax.axvline(gpos[best_ix], linestyle='--', lw=.5, color='k')
+    ax.plot(gpos, signal, marker='o', linestyle=' ', markersize=2,
+            mfc='none', mew=.5)
+    ax.set_ylabel('Selection statistic')
+
+    ax = axs[1]
+    ax.plot(gpos, delta_aics, lw=.5)
+    ax.text(gpos[best_ix], best_delta_aic, 'v', va='bottom', ha='center')
+    ax.set_ylim(bottom=0)
+    ax.set_ylabel(r'$\Delta_{i}$')
+    ax.set_xlabel('Chromosome position (cM)')
+
+    fig.tight_layout()
+    if output_dir:
+        fig.savefig(os.path.join(output_dir, str(iteration),
+                                 'signal_context.png'),
+                    bbox_inches='tight', dpi=150, facecolor='w')

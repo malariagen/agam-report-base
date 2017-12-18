@@ -17,3 +17,5 @@ scikits.bootstrap==0.3.3
 # others
 sphinx==1.6.5
 sphinx-autobuild==0.7.1
+sphinx-bootstrap-theme==0.6.0
+

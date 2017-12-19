@@ -546,6 +546,13 @@ def scan_fit(x, y, flank, fitter, centers, delta_aics, fits,
             delta_aics[i] = fit.min_delta_aic
 
 
+Peak = collections.namedtuple(
+    'Peak',
+    'best_fit best_delta_aic best_ix focus_start focus_stop '
+    'signal_start signal_stop peak_start peak_stop '
+)
+
+
 def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
                min_delta_aic=50, max_iter=20, extend_delta_aic=10,
                max_param_stderr=2, debug=False, output_dir=None):
@@ -578,6 +585,7 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
     # first pass model fits
     scan_fit(x, y, flank=flank, fitter=fitter, centers=gpos,
              delta_aics=delta_aics, fits=fits, debug=debug)
+    delta_aics_orig = delta_aics.copy()
 
     # keep track of which iteration we're on, starting from 1 (be human
     # friendly)
@@ -602,24 +610,27 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         if output_dir:
             os.makedirs(os.path.join(output_dir, str(iteration)), exist_ok=True)
 
-            plot_signal_context(gpos=gpos, signal=signal, delta_aics=delta_aics,
+            plot_signal_context(gpos=gpos, signal=signal,
+                                delta_aics=delta_aics_orig,
                                 best_ix=best_ix, best_delta_aic=best_delta_aic,
                                 output_dir=output_dir, iteration=iteration)
             plot_signal_fit(best_fit, output_dir=output_dir, iteration=iteration)
             plt.show()
 
         log('find extent of region under selection')
-        hit_start = window_starts[best_ix]
+        focus_start = int(window_starts[best_ix])
+        signal_start = focus_start
         # N.B., center is included in left flank, so we'll include the next
         # window along within the hit
-        hit_stop = window_stops[best_ix+1]
+        focus_stop = int(window_stops[best_ix+1])
+        signal_stop = focus_stop
         # search left
         i = best_ix - 1
         while 0 <= i < n:
             if best_delta_aic - fits[i].min_delta_aic < extend_delta_aic:
                 if debug:
                     print('extend hit left', fits[i].delta_aic)
-                hit_start = window_starts[i]
+                signal_start = int(window_starts[i])
                 i -= 1
             else:
                 break
@@ -628,7 +639,7 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         while 0 <= i < n:
             if best_delta_aic - fits[i].min_delta_aic < extend_delta_aic:
                 log('extend hit right', fits[i].delta_aic)
-                hit_stop = window_stops[i+1]
+                signal_stop = int(window_stops[i+1])
                 i += 1
             else:
                 break
@@ -637,16 +648,21 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             print('find flanking region')
         peak_start = peak_stop = None
         if best_fit.peak_start_ix is not None:
-            peak_start = starts_nomiss[best_fit.peak_start_ix]
+            peak_start = int(starts_nomiss[best_fit.peak_start_ix])
         if best_fit.peak_stop_ix is not None:
-            peak_stop = stops_nomiss[best_fit.peak_stop_ix]
+            peak_stop = int(stops_nomiss[best_fit.peak_stop_ix])
 
         if debug:
-            plot_signal_location(best_ix=best_ix, best_fit=best_fit, hit_start=hit_start,
-                                 hit_stop=hit_stop, window_starts=window_starts,
-                                 window_stops=window_stops, starts_nomiss=starts_nomiss,
-                                 stops_nomiss=stops_nomiss, ppos_nomiss=ppos_nomiss,
-                                 iteration=iteration, output_dir=output_dir)
+            plot_signal_location(best_ix=best_ix, best_fit=best_fit,
+                                 hit_start=signal_start,
+                                 hit_stop=signal_stop,
+                                 window_starts=window_starts,
+                                 window_stops=window_stops,
+                                 starts_nomiss=starts_nomiss,
+                                 stops_nomiss=stops_nomiss,
+                                 ppos_nomiss=ppos_nomiss,
+                                 iteration=iteration,
+                                 output_dir=output_dir)
             plt.show()
 
         # filter out hits with too much parameter uncertainty
@@ -658,9 +674,10 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         #         log('failed param check: ', p)
         #
         # if params_check:
-        yield (best_fit, best_delta_aic, best_ix,
-               window_starts[best_ix], window_stops[best_ix+1],
-               hit_start, hit_stop, peak_start, peak_stop)
+        yield Peak(best_fit, best_delta_aic, best_ix,
+                   focus_start, focus_stop,
+                   signal_start, signal_stop,
+                   peak_start, peak_stop)
 
         # subtract peak from signal
         y[best_fit.loc] -= best_fit.peak
@@ -760,7 +777,7 @@ def plot_signal_location(best_ix, best_fit, hit_start, hit_stop, window_starts,
 
     # plot best window
     ax.axvspan(window_starts[best_ix], window_stops[best_ix+1],
-               color=palette[3], alpha=1)
+               color=palette[3], alpha=.5)
 
     # plot fit
     ax.plot(ppos_nomiss[best_fit.loc], best_fit.best_fit,
@@ -768,11 +785,11 @@ def plot_signal_location(best_ix, best_fit, hit_start, hit_stop, window_starts,
 
     # plot data
     ax.plot(ppos_nomiss[best_fit.loc], best_fit.yy, marker='o',
-            linestyle=' ', color=palette[0], mew=.5, mfc='none',
+            linestyle=' ', color=palette[0], mew=1, mfc='none',
             markersize=3)
 
     # tidy up
-    ax.set_xlabel('Physical position')
+    ax.set_xlabel('Chromosome position (bp)')
     ax.set_ylabel('Selection statistic')
     ax.set_ylim(bottom=0)
     fig.tight_layout()
@@ -799,7 +816,7 @@ def plot_signal_context(gpos, signal, delta_aics, best_ix, best_delta_aic,
     ax.plot(gpos, delta_aics, lw=.5)
     ax.text(gpos[best_ix], best_delta_aic, 'v', va='bottom', ha='center')
     ax.set_ylim(bottom=0)
-    ax.set_ylabel(r'$\Delta_{i}$')
+    ax.set_ylabel(r'Peak model fit ($\Delta_{i}$)')
     ax.set_xlabel('Chromosome position (cM)')
 
     fig.tight_layout()

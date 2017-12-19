@@ -610,8 +610,8 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         if output_dir:
             os.makedirs(os.path.join(output_dir, str(iteration)), exist_ok=True)
 
-            plot_signal_context(gpos=gpos, signal=signal,
-                                delta_aics=delta_aics_orig,
+            plot_signal_context(x, y, gpos=gpos, signal=signal,
+                                delta_aics=delta_aics,
                                 best_ix=best_ix, best_delta_aic=best_delta_aic,
                                 output_dir=output_dir, iteration=iteration)
             plot_signal_fit(best_fit, output_dir=output_dir, iteration=iteration)
@@ -800,10 +800,10 @@ def plot_signal_location(best_ix, best_fit, hit_start, hit_stop, window_starts,
                     bbox_inches='tight', dpi=150, facecolor='w')
 
 
-def plot_signal_context(gpos, signal, delta_aics, best_ix, best_delta_aic,
+def plot_signal_context(x, y, gpos, signal, delta_aics, best_ix, best_delta_aic,
                         output_dir, iteration):
     # noinspection PyTypeChecker
-    fig, axs = plt.subplots(nrows=2, figsize=(12, 4), sharex=True)
+    fig, axs = plt.subplots(nrows=3, figsize=(12, 6), sharex=True)
 
     ax = axs[0]
     ax.set_ylim(bottom=0)
@@ -811,13 +811,23 @@ def plot_signal_context(gpos, signal, delta_aics, best_ix, best_delta_aic,
     ax.plot(gpos, signal, marker='o', linestyle=' ', markersize=2,
             mfc='none', mew=.5)
     ax.set_ylabel('Selection statistic')
+    ax.set_title('Original signal')
 
     ax = axs[1]
+    ax.set_ylim(bottom=0)
+    ax.axvline(gpos[best_ix], linestyle='--', lw=.5, color='k')
+    ax.plot(x, y, marker='o', linestyle=' ', markersize=2,
+            mfc='none', mew=.5)
+    ax.set_ylabel('Selection statistic')
+    ax.set_title('Remaining signal at iteration {}'.format(iteration))
+
+    ax = axs[2]
     ax.plot(gpos, delta_aics, lw=.5)
     ax.text(gpos[best_ix], best_delta_aic, 'v', va='bottom', ha='center')
     ax.set_ylim(bottom=0)
-    ax.set_ylabel(r'Peak model fit ($\Delta_{i}$)')
+    ax.set_ylabel(r'$\Delta_{i}$')
     ax.set_xlabel('Chromosome position (cM)')
+    ax.set_title('Peak model fit at iteration {}'.format(iteration))
 
     fig.tight_layout()
     if output_dir:

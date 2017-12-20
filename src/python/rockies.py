@@ -251,13 +251,17 @@ FitResult = collections.namedtuple(
 
 def find_peak_limits(best_fit, baseline, stderr):
     ix_peak_start = ix_peak_stop = None
+    # work forward to find peak start
     for i in range(best_fit.shape[0]):
         v = best_fit[i]
         if ix_peak_start is None:
             if v > baseline + 1 * stderr:
                 ix_peak_start = i
-        elif ix_peak_stop is None:
-            if v < baseline + 1 * stderr:
+    # work backwards to find peak stop
+    for i in range(best_fit.shape[0] - 1, -1, -1):
+        v = best_fit[i]
+        if ix_peak_stop is None:
+            if v > baseline + 1 * stderr:
                 ix_peak_stop = i
                 break
     return ix_peak_start, ix_peak_stop
@@ -409,7 +413,8 @@ class PairExponentialPeakFitter(PeakFitter):
         # initialise null model
         null_model = lmfit.models.ConstantModel()
         null_params = lmfit.Parameters()
-        null_params['c'] = c
+        # allow this one to vary freely
+        null_params['c'] = lmfit.Parameter(value=c.value, vary=True)
         self.null_model = null_model
         self.null_params = null_params
 
@@ -488,10 +493,10 @@ class PairExponentialPeakFitter(PeakFitter):
 
                 # obtain best fit for peak data for subtracting from signal
                 best_fit_l = peak_result_l.best_fit
-                peak_l = best_fit_l - baseline_l
+                peak_l = (best_fit_l - baseline).clip(0, None)
                 residual_l = yl - peak_l
                 best_fit_r = peak_result_r.best_fit
-                peak_r = best_fit_r - baseline_r
+                peak_r = (best_fit_r - baseline).clip(0, None)
                 residual_r = yr - peak_r
 
                 # prepare output
@@ -506,7 +511,8 @@ class PairExponentialPeakFitter(PeakFitter):
 
                 # figure out the width of the peak
                 peak_start_ix = peak_stop_ix = peak_start_x = peak_stop_x = None
-                rix_peak_start, rix_peak_stop = find_peak_limits(best_fit, baseline,
+                rix_peak_start, rix_peak_stop = find_peak_limits(best_fit,
+                                                                 baseline,
                                                                  baseline_stderr)
                 if rix_peak_start is not None and rix_peak_stop is not None:
                     peak_start_ix = ix_left + rix_peak_start
@@ -563,20 +569,43 @@ Peak = collections.namedtuple(
 )
 
 
+def find_best_peak(delta_aics, min_minor_delta_aic, in_peak):
+    if delta_aics.ndim == 2:
+        # make sure we don't find peaks where the minor di is below required
+        # threshold, or where we've found peaks before
+        di = delta_aics.copy()
+        di[(di.min(axis=1) < min_minor_delta_aic) | in_peak] = 0
+        best_ix = np.argmax(di.sum(axis=1))
+        minor_delta_aic = float(min(delta_aics[best_ix]))
+        sum_delta_aic = float(sum(delta_aics[best_ix]))
+    else:
+        # make sure we don't find peaks where we've found peaks before
+        di = delta_aics.copy()
+        di[in_peak] = 0
+        best_ix = np.argmax(di)
+        minor_delta_aic = float(delta_aics[best_ix])
+        sum_delta_aic = float(delta_aics[best_ix])
+    return best_ix, minor_delta_aic, sum_delta_aic
+
+
 def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
                min_minor_delta_aic=30, min_total_delta_aic=60, max_iter=20,
                extend_delta_aic_frc=0.05, verbose=True, output_dir=None,
                log_file='log.txt'):
     """DOC ME"""
 
+    log_path = None
     if log_file:
-        log_path = os.path.join(output_dir, log_file)
+        if output_dir:
+            log_path = os.path.join(output_dir, log_file)
+        else:
+            log_path = log_file
         if os.path.exists(log_path):
             os.remove(log_path)
 
     def log(*args):
         if verbose:
-            if log_file:
+            if log_path:
                 with open(log_path, mode='a') as f:
                     kwargs = dict(file=f)
                     print(*args, **kwargs)
@@ -598,6 +627,7 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         delta_aics = np.zeros(n, dtype='f8')
     log('delta_aics', delta_aics.shape)
     fits = np.empty(n, dtype=object)
+    in_peak = np.zeros(n, dtype=bool)
 
     # strip out missing data
     # noinspection PyUnresolvedReferences
@@ -618,14 +648,9 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
     iteration = 1
 
     # find the first peak
-    if delta_aics.ndim == 2:
-        best_ix = np.argmax(delta_aics.sum(axis=1))
-        minor_delta_aic = float(min(delta_aics[best_ix]))
-        sum_delta_aic = float(sum(delta_aics[best_ix]))
-    else:
-        best_ix = np.argmax(delta_aics)
-        minor_delta_aic = float(delta_aics[best_ix])
-        sum_delta_aic = float(delta_aics[best_ix])
+    best_ix, minor_delta_aic, sum_delta_aic = find_best_peak(
+        delta_aics=delta_aics, min_minor_delta_aic=min_minor_delta_aic,
+        in_peak=in_peak)
     best_fit = fits[best_ix]
     log('first pass', best_ix, minor_delta_aic)
 
@@ -728,9 +753,9 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             iteration += 1
 
         # subtract peak from signal
-        y[best_fit.loc] -= best_fit.peak
+        y[best_fit.loc] = (y[best_fit.loc] - best_fit.peak).clip(0, None)
 
-        # rescan region of the peak
+        # rescan region around the peak
         center = gpos[best_ix]
         ix_rescan_left = bisect_left(gpos, center - (flank * 2))
         ix_rescan_right = bisect_right(gpos, center + (flank * 2))
@@ -740,15 +765,16 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
                  start_index=ix_rescan_left, stop_index=ix_rescan_right,
                  log=log)
 
+        # keep track of where we have found peaks, so we don't find something
+        # in the residuals
+        ix_peak_start = bisect_left(window_starts, peak_start)
+        ix_peak_stop = bisect_right(window_stops, peak_stop)
+        in_peak[ix_peak_start:ix_peak_stop] = True
+
         # find next peak
-        if delta_aics.ndim == 2:
-            best_ix = np.argmax(delta_aics.sum(axis=1))
-            minor_delta_aic = float(min(delta_aics[best_ix]))
-            sum_delta_aic = float(sum(delta_aics[best_ix]))
-        else:
-            best_ix = np.argmax(delta_aics)
-            minor_delta_aic = float(delta_aics[best_ix])
-            sum_delta_aic = float(delta_aics[best_ix])
+        best_ix, minor_delta_aic, sum_delta_aic = find_best_peak(
+            delta_aics=delta_aics, min_minor_delta_aic=min_minor_delta_aic,
+            in_peak=in_peak)
         best_fit = fits[best_ix]
         log('next peak:', best_ix, delta_aics[best_ix])
 
@@ -787,8 +813,8 @@ def plot_peak_fit(fit, figsize=(12, 3.5), iter_out_dir=None):
     ax.set_ylim(bottom=0)
 
     ax = axs[1]
-    # if fit.baseline is not None:
-    #     ax.axhline(fit.baseline, lw=.5, linestyle='--', color='k')
+    if fit.baseline is not None:
+        ax.axhline(fit.baseline, lw=.5, linestyle='--', color='k')
     ax.plot(fit.xx, fit.residual, marker='o', linestyle=' ', markersize=3,
             mfc='none', color=palette[0], mew=.5)
     ax.set_ylim(axs[0].get_ylim())
@@ -810,6 +836,8 @@ def plot_peak_fit(fit, figsize=(12, 3.5), iter_out_dir=None):
     if iter_out_dir:
         fig.savefig(os.path.join(iter_out_dir, 'peak_fit.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
+
+    plt.close()
 
 
 def plot_peak_location(best_ix, best_fit, focus_start, focus_stop, window_starts,
@@ -853,11 +881,13 @@ def plot_peak_location(best_ix, best_fit, focus_start, focus_stop, window_starts
         fig.savefig(os.path.join(iter_out_dir, 'peak_location.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
 
+    plt.close()
+
 
 def plot_peak_targetting(best_ix, best_fit, focus_start, focus_stop,
-                           window_starts, window_stops,
-                           delta_aics, starts_nomiss, stops_nomiss,
-                           iter_out_dir, figsize=(12, 5)):
+                         window_starts, window_stops,
+                         delta_aics, starts_nomiss, stops_nomiss,
+                         iter_out_dir, figsize=(12, 5)):
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -912,6 +942,8 @@ def plot_peak_targetting(best_ix, best_fit, focus_start, focus_stop,
         fig.savefig(os.path.join(iter_out_dir, 'peak_targetting.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
 
+    plt.close()
+
 
 def plot_peak_context(x, y, gpos, signal, delta_aics, best_ix,
                         iter_out_dir, iteration):
@@ -950,3 +982,5 @@ def plot_peak_context(x, y, gpos, signal, delta_aics, best_ix,
     if iter_out_dir:
         fig.savefig(os.path.join(iter_out_dir, 'peak_context.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
+
+    plt.close()

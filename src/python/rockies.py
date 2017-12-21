@@ -784,7 +784,7 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
     log('all done')
 
 
-def plot_peak_fit(fit, figsize=(12, 3.5), iter_out_dir=None):
+def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None):
     # noinspection PyTypeChecker
     fig, axs = plt.subplots(nrows=1, ncols=3, figsize=figsize, facecolor='w')
 
@@ -846,7 +846,7 @@ def plot_peak_fit(fit, figsize=(12, 3.5), iter_out_dir=None):
 def plot_peak_location(best_ix, best_fit, focus_start, focus_stop,
                        window_starts, window_stops, starts_nomiss,
                        stops_nomiss, ppos_nomiss, iter_out_dir,
-                       figsize=(12, 5)):
+                       figsize=(6, 3)):
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -891,7 +891,7 @@ def plot_peak_location(best_ix, best_fit, focus_start, focus_stop,
 def plot_peak_targetting(best_ix, best_fit, focus_start, focus_stop,
                          window_starts, window_stops,
                          delta_aics, starts_nomiss, stops_nomiss,
-                         iter_out_dir, figsize=(12, 5)):
+                         iter_out_dir, figsize=(8, 3.5)):
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -952,7 +952,7 @@ def plot_peak_targetting(best_ix, best_fit, focus_start, focus_stop,
 def plot_peak_context(x, y, gpos, signal, delta_aics, best_ix,
                       iter_out_dir, iteration):
     # noinspection PyTypeChecker
-    fig, axs = plt.subplots(nrows=3, figsize=(12, 6), sharex=True)
+    fig, axs = plt.subplots(nrows=3, figsize=(8, 5), sharex=True)
 
     ax = axs[0]
     ax.set_ylim(bottom=0)

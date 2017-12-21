@@ -565,7 +565,7 @@ def scan_fit(x, y, flank, fitter, centers, delta_aics, fits,
 Peak = collections.namedtuple(
     'Peak',
     'best_fit minor_delta_aic sum_delta_aic best_ix epicenter_start '
-    'epicenter_stop focus_start focus_stop peak_start peak_stop '
+    'epicenter_stop focus_start focus_stop peak_start peak_stop ppos'
 )
 
 
@@ -749,7 +749,7 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
         if not skip:
             yield Peak(best_fit, minor_delta_aic, sum_delta_aic, best_ix,
                        epicenter_start, epicenter_stop, focus_start, focus_stop,
-                       peak_start, peak_stop)
+                       peak_start, peak_stop, ppos_nomiss[best_fit.loc])
             iteration += 1
 
         # subtract peak from signal
@@ -840,9 +840,10 @@ def plot_peak_fit(fit, figsize=(12, 3.5), iter_out_dir=None):
     plt.close()
 
 
-def plot_peak_location(best_ix, best_fit, focus_start, focus_stop, window_starts,
-                         window_stops, starts_nomiss, stops_nomiss, ppos_nomiss,
-                         iter_out_dir, figsize=(12, 5)):
+def plot_peak_location(best_ix, best_fit, focus_start, focus_stop,
+                       window_starts, window_stops, starts_nomiss,
+                       stops_nomiss, ppos_nomiss, iter_out_dir,
+                       figsize=(12, 5)):
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -946,7 +947,7 @@ def plot_peak_targetting(best_ix, best_fit, focus_start, focus_stop,
 
 
 def plot_peak_context(x, y, gpos, signal, delta_aics, best_ix,
-                        iter_out_dir, iteration):
+                      iter_out_dir, iteration):
     # noinspection PyTypeChecker
     fig, axs = plt.subplots(nrows=3, figsize=(12, 6), sharex=True)
 

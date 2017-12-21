@@ -565,7 +565,8 @@ def scan_fit(x, y, flank, fitter, centers, delta_aics, fits,
 Peak = collections.namedtuple(
     'Peak',
     'best_fit minor_delta_aic sum_delta_aic best_ix epicenter_start '
-    'epicenter_stop focus_start focus_stop peak_start peak_stop ppos signal'
+    'epicenter_stop focus_start focus_stop peak_start peak_stop ppos signal '
+    'delta_aic'
 )
 
 
@@ -751,7 +752,7 @@ def find_peaks(window_starts, window_stops, gpos, signal, flank, fitter,
             yield Peak(best_fit, minor_delta_aic, sum_delta_aic, best_ix,
                        epicenter_start, epicenter_stop, focus_start, focus_stop,
                        peak_start, peak_stop, ppos_nomiss[best_fit.loc],
-                       signal_nomiss[best_fit.loc])
+                       signal_nomiss[best_fit.loc], delta_aics[best_ix])
             iteration += 1
 
         # subtract peak from signal

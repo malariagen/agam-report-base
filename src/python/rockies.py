@@ -53,7 +53,10 @@ def load_values(df, values_col, seqid, recmap, genome, spacing=0, seqid_col='seq
     if isinstance(seqid, (tuple, list)):
         assert len(seqid) == 2, 'can only concatenate two sequences'
         (starts1, ends1, gpos1, values1), (starts2, ends2, gpos2, values2) = \
-            [load_values(df, values_col, seqid=c, recmap=recmap) for c in seqid]
+            [load_values(df, values_col=values_col, seqid=c, recmap=recmap,
+                         genome=genome, seqid_col=seqid_col, start_col=start_col,
+                         end_col=end_col)
+             for c in seqid]
         seq1_plen = len(genome[seqid[0]])
         seq1_glen = np.sum(recmap[seqid[0]])
         starts = np.concatenate([starts1, starts2 + seq1_plen + spacing])
@@ -736,6 +739,7 @@ def find_peaks(window_starts, window_ends, gpos, values, flank, fitter,
                            starts_nomiss=starts_nomiss,
                            ends_nomiss=ends_nomiss,
                            ppos_nomiss=ppos_nomiss,
+                           values_nomiss=values_nomiss,
                            iter_out_dir=iter_out_dir)
         plot_peak_targetting(best_ix=best_ix, best_fit=best_fit,
                              focus_start=focus_start,
@@ -851,10 +855,9 @@ def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None):
     plt.close()
 
 
-def plot_peak_location(best_ix, best_fit, focus_start, focus_end,
-                       window_starts, window_ends, starts_nomiss,
-                       ends_nomiss, ppos_nomiss, iter_out_dir,
-                       figsize=(6, 3)):
+def plot_peak_location(best_ix, best_fit, focus_start, focus_end, window_starts,
+                       window_ends, starts_nomiss, ends_nomiss, ppos_nomiss,
+                       values_nomiss, iter_out_dir, figsize=(6, 3)):
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -878,7 +881,7 @@ def plot_peak_location(best_ix, best_fit, focus_start, focus_end,
             linestyle='--', color='k', lw=.5)
 
     # plot data
-    ax.plot(ppos_nomiss[best_fit.loc] / 1e6, best_fit.yy, marker='o',
+    ax.plot(ppos_nomiss[best_fit.loc] / 1e6, values_nomiss[best_fit.loc], marker='o',
             linestyle=' ', color=palette[0], mew=1, mfc='none',
             markersize=3)
 

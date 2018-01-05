@@ -796,7 +796,8 @@ def find_peaks(window_starts, window_ends, gpos, values, flank, fitter,
     log('all done')
 
 
-def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None):
+def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None,
+                  xlabel='Genetic distance (cM)', ylabel='Selection statistic'):
     # noinspection PyTypeChecker
     fig, axs = plt.subplots(nrows=1, ncols=3, figsize=figsize, facecolor='w')
 
@@ -823,8 +824,8 @@ def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None):
         ax.text(.02, .98, r'$\Delta_{i}$ : %.1f' % fit.delta_aic,
                 transform=ax.transAxes, ha='left', va='top')
     ax.set_title('Peak fit')
-    ax.set_ylabel('Selection statistic')
-    ax.set_xlabel('Genetic distance (cM)')
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
     ax.set_ylim(bottom=0)
 
     ax = axs[1]
@@ -834,15 +835,15 @@ def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None):
             mfc='none', color=palette[0], mew=.5)
     ax.set_ylim(axs[0].get_ylim())
     ax.set_title('Residual')
-    ax.set_ylabel('Selection statistic')
-    ax.set_xlabel('Genetic distance (cM)')
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
     ax.set_ylim(bottom=0)
 
     ax = axs[2]
     ax.hist(fit.residual, bins=30)
     # if fit.baseline is not None:
     #     ax.axvline(fit.baseline, lw=.5, linestyle='--', color='k')
-    ax.set_xlabel('Selection statistic')
+    ax.set_xlabel(ylabel)
     ax.set_ylabel('Frequency')
     ax.set_title('Residual')
 
@@ -851,8 +852,7 @@ def plot_peak_fit(fit, figsize=(8, 2.5), iter_out_dir=None):
     if iter_out_dir:
         fig.savefig(os.path.join(iter_out_dir, 'peak_fit.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
-
-    plt.close()
+        plt.close()
 
 
 def plot_peak_location(best_ix, best_fit, focus_start, focus_end, window_starts,
@@ -894,8 +894,7 @@ def plot_peak_location(best_ix, best_fit, focus_start, focus_end, window_starts,
     if iter_out_dir:
         fig.savefig(os.path.join(iter_out_dir, 'peak_location.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
-
-    plt.close()
+        plt.close()
 
 
 def plot_peak_targetting(best_ix, best_fit, focus_start, focus_end, window_starts,
@@ -953,8 +952,7 @@ def plot_peak_targetting(best_ix, best_fit, focus_start, focus_end, window_start
     if iter_out_dir:
         fig.savefig(os.path.join(iter_out_dir, 'peak_targetting.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
-
-    plt.close()
+        plt.close()
 
 
 def plot_peak_context(x, y, gpos, values, delta_aics, best_ix,
@@ -994,5 +992,4 @@ def plot_peak_context(x, y, gpos, values, delta_aics, best_ix,
     if iter_out_dir:
         fig.savefig(os.path.join(iter_out_dir, 'peak_context.png'),
                     bbox_inches='tight', dpi=150, facecolor='w')
-
-    plt.close()
+        plt.close()

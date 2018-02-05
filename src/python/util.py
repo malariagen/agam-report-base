@@ -173,7 +173,7 @@ def fig_linear_genome(plotf, genome, chromosomes=('2R', '2L', '3R', '3L', 'X'),
 
         # create axes
         ax = fig.add_axes([left, bottom, width, height])
-        ax.set_axis_bgcolor((1, 1, 1, 0))
+        ax.set_facecolor((1, 1, 1, 0))
         axs[chrom] = ax
 
         # construct clip path

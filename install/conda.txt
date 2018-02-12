@@ -8,7 +8,6 @@ cython=0.25.2
 dask=0.15.2
 fastcluster=1.1.23
 graphviz=2.38.0
-hapbin=1.0.0
 humanize=0.5.1
 h5py=2.7.0
 intervaltree=2.1.0

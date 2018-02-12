@@ -55,4 +55,30 @@ if [ ! -f miniconda.installed ]; then
 else
     echo "[install] skipping miniconda installation"
 fi
-:
+
+
+echo "[install] installing Python packages"
+source activate $CONDANAME
+# ensure conda channels
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+# conda install
+conda install --yes --file conda_mac.txt
+# pypi install
+pip install --no-cache-dir -r pypi.txt
+# clean conda caches
+conda clean --yes --all
+
+
+echo "[install] installing additional texlive packages"
+tlmgr option repository $TEXREPO
+tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
+for package in $(cat texlive.packages); do
+    $tlmgr_install $package
+done
+
+
+# check to see how much space needed for cache
+du -hs ./*
+du -hs ./*/*

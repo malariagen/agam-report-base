@@ -64,9 +64,9 @@ conda config --add channels defaults
 conda config --add channels bioconda
 conda config --add channels conda-forge
 # conda install
-conda install --yes --file conda_mac.txt
+conda install --yes --file ../conda.txt
 # pypi install
-pip install --no-cache-dir -r pypi.txt
+pip install --no-cache-dir -r ../pypi.txt
 # clean conda caches
 conda clean --yes --all
 

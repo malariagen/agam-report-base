@@ -1,13 +1,13 @@
 # not on conda-forge
 anhima==0.11.2
 # not on conda-forge
-prettypandas==0.0.3
+prettypandas==0.0.4
 # not on conda-forge
 xlwt-future==0.8.0
 # not on conda-forge
 hmmlearn==0.2.0
 # version not on conda-forge
-graphviz==0.8
+graphviz==0.8.2
 # not build for Python 3.6 on conda-forge
 petl==1.1.1
 petlx==1.0.3

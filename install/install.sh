@@ -24,8 +24,8 @@ export PATH=./${CONDADIR}/bin:$PATH
 
 
 # use a snapshot mirror to get reproducible install
-TEXREPO=https://ctanmirror.speedata.de/2017-09-01/systems/texlive/tlnet
-
+#TEXREPO=https://ctanmirror.speedata.de/2017-09-01/systems/texlive/tlnet
+TEXREPO=ftp://ftp.tug.org/historic/systems/texlive/2017/tlnet-final
 
 # install miniconda
 if [ ! -f miniconda.installed ]; then

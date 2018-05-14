@@ -19,13 +19,8 @@ cd $DEPSDIR
 
 
 # put dependencies on the path
-export PATH=./texlive/bin/x86_64-linux:$PATH
 export PATH=./${CONDADIR}/bin:$PATH
 
-
-# use a snapshot mirror to get reproducible install
-#TEXREPO=https://ctanmirror.speedata.de/2017-09-01/systems/texlive/tlnet
-TEXREPO=ftp://ftp.tug.org/historic/systems/texlive/2017/tlnet-final
 
 # install miniconda
 if [ ! -f miniconda.installed ]; then
@@ -57,35 +52,6 @@ else
 fi
 
 
-# install texlive
-if [ ! -f texlive.installed ]; then
-    echo "[install] installing texlive"
-
-    # clean up any previous
-    rm -rvf texlive*
-    rm -rvf install*
-
-    # download texlive
-    wget ${TEXREPO}/install-tl-unx.tar.gz
-
-    # unpack archive
-    tar zxvf install-tl-unx.tar.gz
-
-    # run installation
-    ./install-tl-*/install-tl \
-        -repository=$TEXREPO \
-        -profile=../agam-report-base/install/texlive.profile \
-        -no-persistent-downloads \
-        -no-verify-downloads
-
-    # mark successful installation
-    touch texlive.installed
-
-else
-    echo "[install] skipping texlive installation"
-fi
-
-
 echo "[install] installing Python packages"
 source activate $CONDANAME
 # ensure conda channels
@@ -98,16 +64,3 @@ conda install --yes --file ../agam-report-base/install/conda.txt
 pip install --no-cache-dir -r ../agam-report-base/install/pypi.txt
 # clean conda caches
 conda clean --yes --all
-
-
-echo "[install] installing additional texlive packages"
-tlmgr option repository $TEXREPO
-tlmgr_install="tlmgr install --no-persistent-downloads --no-verify-downloads"
-for package in $(cat ../agam-report-base/install/texlive.packages); do
-    $tlmgr_install $package
-done
-
-
-# check to see how much space needed for cache
-du -hs ./*
-du -hs ./*/*

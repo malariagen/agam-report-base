@@ -17,3 +17,9 @@ type1cm
 ucs
 dvipng
 anyfontsize
+changepage
+lastpage
+sidecap
+wrapfig
+marginnote
+cleveref

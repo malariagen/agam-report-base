@@ -143,7 +143,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # main callset, PASS variants only
     callset_pass_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'pass', 'ag1000g.phase2.ar1.pass.h5')
     callset_pass_lite_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'lite', 'ag1000g.phase2.ar1.pass.lite.h5')
-    callset_pass_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'pass', 'ag1000g.phase2.ar1')
+    callset_pass_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'pass', 'ag1000g.phase2.ar1.pass')
 
     # preference: zarr > hdf5 > hdf5 (lite)
     if os.path.exists(callset_pass_zarr_fn):

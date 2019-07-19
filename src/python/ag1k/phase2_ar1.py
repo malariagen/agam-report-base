@@ -156,7 +156,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # main callset, PASS biallelic variants only
     callset_pass_biallelic_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'biallelic', 'ag1000g.phase2.ar1.pass.biallelic.h5')
     callset_pass_biallelic_lite_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'lite', 'ag1000g.phase2.ar1.pass.biallelic.lite.h5')
-    callset_pass_biallelic_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'biallelic', 'ag1000g.phase2.ar1')
+    callset_pass_biallelic_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'biallelic', 'ag1000g.phase2.ar1.pass.biallelic')
 
     # preference: zarr > hdf5 > hdf5 (lite)
     if os.path.exists(callset_pass_biallelic_zarr_fn):

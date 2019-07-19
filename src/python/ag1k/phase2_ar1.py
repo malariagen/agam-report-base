@@ -130,7 +130,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # main callset
     callset_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'all', 'ag1000g.phase2.ar1.h5')
     callset_lite_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'lite', 'ag1000g.phase2.ar1.lite.h5')
-    callset_zarr_fn = os.path.join(variation_dir, 'main', 'zarr2', 'ag1000g.phase2.ar1')
+    callset_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'all', 'ag1000g.phase2.ar1')
 
     # preference: zarr > hdf5 > hdf5 (lite)
     if os.path.exists(callset_zarr_fn):
@@ -143,7 +143,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # main callset, PASS variants only
     callset_pass_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'pass', 'ag1000g.phase2.ar1.pass.h5')
     callset_pass_lite_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'lite', 'ag1000g.phase2.ar1.pass.lite.h5')
-    callset_pass_zarr_fn = os.path.join(variation_dir, 'main', 'zarr2', 'ag1000g.phase2.ar1.pass')
+    callset_pass_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'pass', 'ag1000g.phase2.ar1.pass')
 
     # preference: zarr > hdf5 > hdf5 (lite)
     if os.path.exists(callset_pass_zarr_fn):
@@ -156,7 +156,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
     # main callset, PASS biallelic variants only
     callset_pass_biallelic_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'biallelic', 'ag1000g.phase2.ar1.pass.biallelic.h5')
     callset_pass_biallelic_lite_h5_fn = os.path.join(variation_dir, 'main', 'hdf5', 'lite', 'ag1000g.phase2.ar1.pass.biallelic.lite.h5')
-    callset_pass_biallelic_zarr_fn = os.path.join(variation_dir, 'main', 'zarr2', 'ag1000g.phase2.ar1.pass.biallelic')
+    callset_pass_biallelic_zarr_fn = os.path.join(variation_dir, 'main', 'zarr', 'biallelic', 'ag1000g.phase2.ar1.pass.biallelic')
 
     # preference: zarr > hdf5 > hdf5 (lite)
     if os.path.exists(callset_pass_biallelic_zarr_fn):

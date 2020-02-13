@@ -243,7 +243,7 @@ def init(release_dir, load_geneset=False, geneset_attributes=None):
             .rename('row', 'index')
             .addfield('ox_code', lambda row: row.label[:-1])
             .hashleftjoin(tbl_samples, key='ox_code')
-            .addfield('label_aug', lambda row: '%s [%s, %s, %s, %s]' % (row.label, row.country, row.region, row.m_s, row.sex))
+            .addfield('label_aug', lambda row: '%s [%s, %s, %s, %s]' % (row.label, row.country, row.location, row.m_s, row.sex))
         )
         lkp_haplotypes = tbl_haplotypes.recordlookupone('label')
         df_haplotypes = tbl_haplotypes.todataframe(index='index')
